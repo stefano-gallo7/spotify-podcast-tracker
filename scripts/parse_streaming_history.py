@@ -6,11 +6,13 @@ import argparse
 
 def parse_podcast_history(source_folder: str, output_path: str = "data/podcast_history.json", min_seconds: int = 40) -> list[dict]:
     """
-    Parse Spotify extended streaming history files and extract podcast episodes.
+    Parse Spotify extended streaming history files and aggregate per podcast episode.
 
     Reads all Streaming_History_Audio_*.json files from source_folder, filters for
-    podcast episodes, deduplicates by episode URI (keeping the longest listen; ties broken by most recent ts),
-    and saves the result to output_path.
+    podcast events, drops exact-duplicate events that appear in overlapping export
+    files, filters out short plays, then aggregates per episode URI: total ms_played,
+    is_fully_played (any reason_end == "trackdone"), last_listened_at, play_count,
+    and platform/country from the most recent play.
     """
     pattern = os.path.join(source_folder, "Streaming_History_Audio_*.json")
     files = sorted(glob.glob(pattern))
@@ -31,48 +33,47 @@ def parse_podcast_history(source_folder: str, output_path: str = "data/podcast_h
 
     print(f"\n{len(raw_episodes)} total podcast play events")
 
+    # Drop exact duplicates (same URI + same timestamp) from overlapping export files
+    distinct: dict[tuple[str, str], dict] = {}
+    for e in raw_episodes:
+        distinct[(e["spotify_episode_uri"], e["ts"])] = e
+    plays = list(distinct.values())
+    print(f"{len(plays)} distinct play events after dropping exact duplicates")
+
     min_ms = min_seconds * 1000
-    raw_episodes = [e for e in raw_episodes if e["ms_played"] >= min_ms]
-    print(f"{len(raw_episodes)} events after filtering plays shorter than {min_seconds}s")
+    plays = [e for e in plays if e["ms_played"] >= min_ms]
+    print(f"{len(plays)} plays after filtering plays shorter than {min_seconds}s")
 
+    # Aggregate per episode URI
+    by_uri: dict[str, list[dict]] = {}
+    for play in plays:
+        by_uri.setdefault(play["spotify_episode_uri"], []).append(play)
 
-    # Deduplicate by episode URI, keeping the longest listen; break ties by most recent ts
-    by_uri: dict[str, dict] = {}
-    for episode in raw_episodes:
-        uri = episode["spotify_episode_uri"]
-        if uri not in by_uri:
-            by_uri[uri] = episode
-        else:
-            current = by_uri[uri]
-            if (episode["ms_played"], episode["ts"]) > (current["ms_played"], current["ts"]):
-                by_uri[uri] = episode
-
-    deduplicated = sorted(by_uri.values(), key=lambda e: e["ts"], reverse=True)
-    print(f"{len(deduplicated)} unique episodes after deduplication")
-
-    output = [_extract_fields(e) for e in deduplicated]
+    aggregated = [_aggregate(uri, plays) for uri, plays in by_uri.items()]
+    aggregated.sort(key=lambda e: e["last_listened_at"], reverse=True)
+    print(f"{len(aggregated)} unique episodes after aggregation")
 
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
+        json.dump(aggregated, f, indent=2, ensure_ascii=False)
 
     print(f"Saved to {output_path}")
-    return output
+    return aggregated
 
 
-def _extract_fields(entry: dict) -> dict:
+def _aggregate(uri: str, plays: list[dict]) -> dict:
+    plays.sort(key=lambda p: p["ts"])
+    most_recent = plays[-1]
     return {
-        "listened_at": entry["ts"],
-        "show_name": entry["episode_show_name"],
-        "episode_name": entry["episode_name"],
-        "spotify_episode_uri": entry["spotify_episode_uri"],
-        "ms_played": entry["ms_played"],
-        "skipped": entry["skipped"],
-        "reason_end": entry["reason_end"],
-        "offline": entry["offline"],
-        "offline_timestamp": entry["offline_timestamp"],
-        "platform": entry["platform"],
-        "connection_country": entry["conn_country"]
+        "spotify_episode_uri": uri,
+        "show_name": most_recent["episode_show_name"],
+        "episode_name": most_recent["episode_name"],
+        "ms_played": sum(p["ms_played"] for p in plays),
+        "is_fully_played": any(p["reason_end"] == "trackdone" for p in plays),
+        "last_listened_at": most_recent["ts"],
+        "play_count": len(plays),
+        "platform": most_recent["platform"],
+        "connection_country": most_recent["conn_country"],
     }
 
 
