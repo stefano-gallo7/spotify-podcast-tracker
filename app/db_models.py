@@ -1,7 +1,8 @@
 from sqlalchemy import (
     Column, String, Integer, SmallInteger, Boolean, DateTime, Date,
-    ForeignKey, Text, Table, CheckConstraint, func
+    ForeignKey, Text, Table, CheckConstraint, func, select
 )
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 from app.db import Base
 
@@ -32,6 +33,7 @@ class Show(Base):
     uri = Column(String, unique=True, nullable=True)
     description = Column(Text, nullable=True)
     total_episodes = Column(Integer, nullable=True)
+    has_new_episodes = Column(Boolean, default=False, nullable=False)
     image_url_big = Column(String, nullable=True)
     image_url_medium = Column(String, nullable=True)
     image_url_small = Column(String, nullable=True)
@@ -55,6 +57,26 @@ class Show(Base):
         "Episode", back_populates="show", cascade="all, delete-orphan"
     )
     tags = relationship("Tag", secondary=show_tags, back_populates="shows")
+
+    @hybrid_property
+    def listened_count(self) -> int:
+        return sum(1 for e in self.episodes if e.is_fully_played)
+
+    @listened_count.expression
+    def listened_count(cls):
+        return (
+            select(func.count(Episode.uri))
+            .where(Episode.show_id == cls.id, Episode.is_fully_played.is_(True))
+            .scalar_subquery()
+        )
+
+    @hybrid_property
+    def has_more_episodes(self) -> bool:
+        return (self.total_episodes or 0) > self.listened_count
+
+    @has_more_episodes.expression
+    def has_more_episodes(cls):
+        return cls.total_episodes > cls.listened_count
 
 
 class Episode(Base):
