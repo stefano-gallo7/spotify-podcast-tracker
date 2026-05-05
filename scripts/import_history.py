@@ -11,7 +11,7 @@ def _normalize(name: str) -> str:
 
 
 def _parse_ts(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    return datetime.fromisoformat(ts.removesuffix("Z"))
 
 
 def import_history(history_path: str, session) -> dict[str, int]:
