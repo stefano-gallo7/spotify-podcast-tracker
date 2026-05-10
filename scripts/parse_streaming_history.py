@@ -11,7 +11,7 @@ def parse_podcast_history(source_folder: str, output_path: str = "data/podcast_h
     Reads all Streaming_History_Audio_*.json files from source_folder, filters for
     podcast events, drops exact-duplicate events that appear in overlapping export
     files, filters out short plays, then aggregates per episode URI: total ms_played,
-    is_fully_played (any reason_end == "trackdone"), last_listened_at, play_count,
+    is_fully_played (any reason_end == "trackdone" or "endplay"), last_listened_at, play_count,
     and platform/country from the most recent play.
     """
     pattern = os.path.join(source_folder, "Streaming_History_Audio_*.json")
@@ -69,7 +69,7 @@ def _aggregate(uri: str, plays: list[dict]) -> dict:
         "show_name": most_recent["episode_show_name"],
         "episode_name": most_recent["episode_name"],
         "ms_played": sum(p["ms_played"] for p in plays),
-        "is_fully_played": any(p["reason_end"] == "trackdone" for p in plays),
+        "is_fully_played": any(p["reason_end"] in ["trackdone", "endplay"] for p in plays),
         "last_listened_at": most_recent["ts"],
         "play_count": len(plays),
         "platform": most_recent["platform"],
