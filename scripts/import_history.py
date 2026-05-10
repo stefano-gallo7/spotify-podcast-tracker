@@ -40,12 +40,11 @@ def import_history(history_path: str, session) -> dict[str, int]:
     }
 
     for entry in entries:
-        show_name = entry["show_name"]
-        show = _get_or_create_show(session, show_name, show_cache, stats)
-
         uri = entry["spotify_episode_uri"]
         episode = episode_cache.get(uri)
+        
         if episode is None:
+            show = _get_or_create_show(session, entry["show_name"], show_cache, stats)
             episode = _create_episode(entry, show)
             session.add(episode)
             episode_cache[uri] = episode
