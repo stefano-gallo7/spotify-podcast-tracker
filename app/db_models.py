@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import (
     Column, String, Integer, SmallInteger, Boolean, DateTime, Date,
     ForeignKey, Text, Table, CheckConstraint, func, select
@@ -43,7 +45,7 @@ class Show(Base):
     media_type = Column(String, nullable=True)
 
     # User interaction
-    status = Column(String, default="active", index=True)  # active / finished / dropped / paused / backlog
+    status = Column(String, default="active", index=True)  # active / finished / dropped / paused
     status_changed_at = Column(DateTime, nullable=True)
     is_favorite = Column(Boolean, default=False)
     notes = Column(Text, nullable=True)
@@ -77,6 +79,21 @@ class Show(Base):
     @has_more_episodes.expression
     def has_more_episodes(cls):
         return cls.total_episodes > cls.listened_count
+
+    @hybrid_property
+    def last_played_at(self) -> datetime | None:
+        return max(
+            (e.last_played_at or e.created_at for e in self.episodes),
+            default=None,
+        )
+
+    @last_played_at.expression
+    def last_played_at(cls):
+        return (
+            select(func.max(func.coalesce(Episode.last_played_at, Episode.created_at)))
+            .where(Episode.show_id == cls.id)
+            .scalar_subquery()
+        )
 
 
 class Episode(Base):
