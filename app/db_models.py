@@ -128,3 +128,7 @@ class Episode(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     show = relationship("Show", back_populates="episodes")
+
+    @property
+    def id(self) -> str:
+        return self.uri.rsplit(":", 1)[-1]

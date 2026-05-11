@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.routes import shows
+from app.routes import episodes, shows
 
 app = FastAPI(
     title="Spotify Podcast Tracker",
@@ -9,6 +9,7 @@ app = FastAPI(
 )
 
 app.include_router(shows.router)
+app.include_router(episodes.router)
 
 
 @app.get("/")
