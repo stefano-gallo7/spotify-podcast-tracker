@@ -21,8 +21,18 @@ class ShowSummary(BaseModel):
     total_episodes: int | None = None
     listened_count: int
     has_more_episodes: bool
+    last_played_at: datetime | None = None
     status: str
     is_favorite: bool
+
+
+class PaginatedShows(BaseModel):
+    """Wrapper for a page of shows plus pagination metadata."""
+
+    items: list[ShowSummary]
+    total: int
+    limit: int
+    offset: int
 
 
 class EpisodeSummary(BaseModel):
