@@ -1,6 +1,10 @@
 from datetime import date, datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+
+ShowStatus = Literal["active", "finished", "dropped", "paused"]
 
 
 class TagOut(BaseModel):
@@ -90,3 +94,20 @@ class EpisodeDetail(EpisodeSummary):
     notes: str | None = None
     is_archived: bool
     show: ShowReference
+
+
+class ShowUpdate(BaseModel):
+    """Partial update for a Show. All fields optional."""
+
+    status: ShowStatus | None = None
+    is_favorite: bool | None = None
+    notes: str | None = None
+
+
+class EpisodeUpdate(BaseModel):
+    """Partial update for an Episode. All fields optional."""
+
+    rating: int | None = Field(None, ge=1, le=5)
+    is_favorite: bool | None = None
+    is_archived: bool | None = None
+    notes: str | None = None

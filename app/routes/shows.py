@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -6,13 +7,16 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.db_models import Show, Tag
-from app.schemas import PaginatedShows, ShowDetail
+from app.schemas import PaginatedShows, ShowDetail, ShowStatus, ShowUpdate
 
 router = APIRouter(prefix="/api/shows", tags=["shows"])
 
-ShowStatus = Literal["active", "finished", "dropped", "paused"]
 SortKey = Literal["name", "listened_count", "total_episodes", "last_played"]
 SortOrder = Literal["asc", "desc"]
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @router.get("", response_model=PaginatedShows)
@@ -68,6 +72,32 @@ def get_show(show_id: int, session: Session = Depends(get_session)):
     show = session.query(Show).filter(Show.id == show_id).first()
     if show is None:
         raise HTTPException(status_code=404, detail="Show not found")
+
+    show.episodes.sort(
+        key=lambda e: (e.release_date is None, e.release_date),
+        reverse=True,
+    )
+    return show
+
+
+@router.patch("/{show_id}", response_model=ShowDetail)
+def update_show(
+    show_id: int,
+    update: ShowUpdate,
+    session: Session = Depends(get_session),
+):
+    show = session.query(Show).filter(Show.id == show_id).first()
+    if show is None:
+        raise HTTPException(status_code=404, detail="Show not found")
+
+    update_data = update.model_dump(exclude_unset=True)
+    if "status" in update_data and update_data["status"] != show.status:
+        show.status_changed_at = _now()
+    for field, value in update_data.items():
+        setattr(show, field, value)
+
+    session.commit()
+    session.refresh(show)
 
     show.episodes.sort(
         key=lambda e: (e.release_date is None, e.release_date),
