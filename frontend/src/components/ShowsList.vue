@@ -1,9 +1,12 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import ShowCard from './ShowCard.vue'
+
+const PAGE_SIZE = 20
 
 const shows = ref([])
 const total = ref(0)
+const offset = ref(0)
 const loading = ref(false)
 const error = ref(null)
 
@@ -16,6 +19,11 @@ const order = ref('asc')
 
 let debounceTimer = null
 
+const currentPage = computed(() => Math.floor(offset.value / PAGE_SIZE) + 1)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)))
+const canPrev = computed(() => offset.value > 0)
+const canNext = computed(() => offset.value + PAGE_SIZE < total.value)
+
 async function loadShows() {
   loading.value = true
   error.value = null
@@ -27,6 +35,8 @@ async function loadShows() {
     if (isFavorite.value) params.set('is_favorite', 'true')
     params.set('sort', sort.value)
     params.set('order', order.value)
+    params.set('limit', PAGE_SIZE)
+    params.set('offset', offset.value)
     const url = `http://localhost:8000/api/shows?${params}`
     const response = await fetch(url)
     if (!response.ok) {
@@ -46,14 +56,28 @@ function toggleOrder() {
   order.value = order.value === 'asc' ? 'desc' : 'asc'
 }
 
+function nextPage() {
+  offset.value += PAGE_SIZE
+  loadShows()
+}
+
+function prevPage() {
+  offset.value = Math.max(0, offset.value - PAGE_SIZE)
+  loadShows()
+}
+
 onMounted(loadShows)
 
 watch(q, () => {
+  offset.value = 0
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(loadShows, 300)
 })
 
-watch([status, hasMore, isFavorite, sort, order], loadShows)
+watch([status, hasMore, isFavorite, sort, order], () => {
+  offset.value = 0
+  loadShows()
+})
 </script>
 
 <template>
@@ -111,9 +135,16 @@ watch([status, hasMore, isFavorite, sort, order], loadShows)
 
   <p v-if="loading" class="status-line">Loading…</p>
   <p v-else-if="error" class="status-line error">Failed to load: {{ error }}</p>
-  <div v-else class="shows-list">
-    <ShowCard v-for="show in shows" :key="show.id" :show="show" />
-  </div>
+  <template v-else>
+    <div class="shows-list">
+      <ShowCard v-for="show in shows" :key="show.id" :show="show" />
+    </div>
+    <div v-if="total > 0" class="pagination">
+      <button type="button" :disabled="!canPrev" @click="prevPage">← Prev</button>
+      <span class="page-indicator">Page {{ currentPage }} of {{ totalPages }}</span>
+      <button type="button" :disabled="!canNext" @click="nextPage">Next →</button>
+    </div>
+  </template>
 </template>
 
 <style scoped>
@@ -212,5 +243,40 @@ select {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px 10px;
+}
+
+.pagination button {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  font-family: var(--sans);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.pagination button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.page-indicator {
+  font-size: 14px;
+  color: var(--text);
+  min-width: 100px;
+  text-align: center;
 }
 </style>
