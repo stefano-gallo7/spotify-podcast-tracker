@@ -14,8 +14,8 @@ const q = ref('')
 const status = ref('')
 const hasMore = ref(false)
 const isFavorite = ref(false)
-const sort = ref('name')
-const order = ref('asc')
+const sort = ref('last_played')
+const order = ref('desc')
 
 let debounceTimer = null
 
