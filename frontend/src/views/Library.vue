@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import ShowCard from './ShowCard.vue'
+import ShowCard from '../components/ShowCard.vue'
+import { listShows } from '../api'
 
 const PAGE_SIZE = 20
 
@@ -37,12 +38,7 @@ async function loadShows() {
     params.set('order', order.value)
     params.set('limit', PAGE_SIZE)
     params.set('offset', offset.value)
-    const url = `http://localhost:8000/api/shows?${params}`
-    const response = await fetch(url)
-    if (!response.ok) {
-      throw new Error(`API returned ${response.status}`)
-    }
-    const data = await response.json()
+    const data = await listShows(params)
     shows.value = data.items
     total.value = data.total
   } catch (err) {

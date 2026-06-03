@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { formatDate } from '../utils/format'
 
 const props = defineProps({
   show: {
@@ -13,38 +14,43 @@ const progress = computed(() => {
   return `${props.show.listened_count} of ${props.show.total_episodes} episodes`
 })
 
-const lastPlayedLabel = computed(() => {
-  if (!props.show.last_played_at) return null
-  const date = new Date(props.show.last_played_at)
-  return date.toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  })
-})
+const lastPlayedLabel = computed(() => formatDate(props.show.last_played_at))
 </script>
 
 <template>
-  <article class="show-card">
-    <img
-      v-if="show.image_url_medium"
-      :src="show.image_url_medium"
-      :alt="`Cover for ${show.name}`"
-      class="cover"
-    />
-    <div class="info">
-      <h3>
-        {{ show.name }}
-        <span v-if="show.is_favorite" class="favorite" aria-label="Favorite">★</span>
-      </h3>
-      <p v-if="progress" class="meta">{{ progress }}</p>
-      <p v-if="lastPlayedLabel" class="meta">Last played: {{ lastPlayedLabel }}</p>
-      <p class="meta status">{{ show.status }}</p>
-    </div>
-  </article>
+  <router-link
+    :to="{ name: 'show-detail', params: { id: show.id } }"
+    class="card-link"
+  >
+    <article class="show-card">
+      <img
+        v-if="show.image_url_medium"
+        :src="show.image_url_medium"
+        :alt="`Cover for ${show.name}`"
+        class="cover"
+      />
+      <div class="info">
+        <h3>
+          {{ show.name }}
+          <span v-if="show.is_favorite" class="favorite" aria-label="Favorite">★</span>
+        </h3>
+        <p v-if="progress" class="meta">{{ progress }}</p>
+        <p v-if="lastPlayedLabel" class="meta">Last played: {{ lastPlayedLabel }}</p>
+        <p class="meta status">{{ show.status }}</p>
+      </div>
+    </article>
+  </router-link>
 </template>
 
 <style scoped>
+.card-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  margin-left: 10px;
+  margin-right: 10px;
+}
+
 .show-card {
   display: flex;
   gap: 16px;
@@ -52,8 +58,11 @@ const lastPlayedLabel = computed(() => {
   border: 1px solid var(--border);
   border-radius: 8px;
   margin-bottom: 8px;
-  margin-left: 10px;
-  margin-right: 10px;
+  transition: border-color 0.15s;
+}
+
+.card-link:hover .show-card {
+  border-color: var(--accent);
 }
 
 .cover {
