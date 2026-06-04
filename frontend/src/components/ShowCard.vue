@@ -1,6 +1,8 @@
 <script setup>
 import { computed } from 'vue'
 import { formatDate } from '../utils/format'
+import { createPatchHelper } from '../utils/applyPatch'
+import { updateShow } from '../api'
 
 const props = defineProps({
   show: {
@@ -9,12 +11,31 @@ const props = defineProps({
   },
 })
 
+const emit = defineEmits(['update'])
+
+const applyPatch = createPatchHelper({
+  getter: () => props.show,
+  setter: (v) => emit('update', v),
+  update: updateShow,
+})
+
 const progress = computed(() => {
   if (!props.show.total_episodes) return null
   return `${props.show.listened_count} of ${props.show.total_episodes} episodes`
 })
 
 const lastPlayedLabel = computed(() => formatDate(props.show.last_played_at))
+
+function toggleFavorite() {
+  return applyPatch({ is_favorite: !props.show.is_favorite })
+}
+
+function onStatusChange(event) {
+  const newStatus = event.target.value
+  if (newStatus !== props.show.status) {
+    applyPatch({ status: newStatus })
+  }
+}
 </script>
 
 <template>
@@ -32,11 +53,31 @@ const lastPlayedLabel = computed(() => formatDate(props.show.last_played_at))
       <div class="info">
         <h3>
           {{ show.name }}
-          <span v-if="show.is_favorite" class="favorite" aria-label="Favorite">★</span>
+          <button
+            type="button"
+            class="favorite-btn"
+            :class="{ active: show.is_favorite }"
+            :aria-label="show.is_favorite ? 'Remove from favorites' : 'Add to favorites'"
+            :aria-pressed="show.is_favorite"
+            @click.prevent.stop="toggleFavorite"
+          >
+            {{ show.is_favorite ? '★' : '☆' }}
+          </button>
         </h3>
         <p v-if="progress" class="meta">{{ progress }}</p>
         <p v-if="lastPlayedLabel" class="meta">Last played: {{ lastPlayedLabel }}</p>
-        <p class="meta status">{{ show.status }}</p>
+        <select
+          class="status-select"
+          :value="show.status"
+          @click.stop
+          @mousedown.stop
+          @change="onStatusChange"
+        >
+          <option value="active">Active</option>
+          <option value="finished">Finished</option>
+          <option value="dropped">Dropped</option>
+          <option value="paused">Paused</option>
+        </select>
       </div>
     </article>
   </router-link>
@@ -78,6 +119,7 @@ const lastPlayedLabel = computed(() => formatDate(props.show.last_played_at))
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  align-items: flex-start;
 }
 
 .info h3 {
@@ -85,12 +127,29 @@ const lastPlayedLabel = computed(() => formatDate(props.show.last_played_at))
   font-size: 18px;
   font-weight: 500;
   color: var(--text-h);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.favorite {
+.favorite-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 0;
+  color: var(--text);
+  transition: color 0.15s;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.favorite-btn:hover {
   color: var(--accent);
-  font-size: 16px;
-  margin-left: 6px;
+}
+
+.favorite-btn.active {
+  color: var(--accent);
 }
 
 .meta {
@@ -99,9 +158,20 @@ const lastPlayedLabel = computed(() => formatDate(props.show.last_played_at))
   color: var(--text);
 }
 
-.status {
-  text-transform: capitalize;
+.status-select {
+  margin-top: 2px;
+  padding: 2px 6px;
   font-size: 12px;
+  font-family: var(--sans);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
   color: var(--accent);
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.status-select:hover {
+  border-color: var(--accent);
 }
 </style>

@@ -62,6 +62,13 @@ function prevPage() {
   loadShows()
 }
 
+function onShowUpdate(updated) {
+  const index = shows.value.findIndex((s) => s.id === updated.id)
+  if (index !== -1) {
+    shows.value[index] = updated
+  }
+}
+
 onMounted(loadShows)
 
 watch(q, () => {
@@ -133,7 +140,12 @@ watch([status, hasMore, isFavorite, sort, order], () => {
   <p v-else-if="error" class="status-line error">Failed to load: {{ error }}</p>
   <template v-else>
     <div class="shows-list">
-      <ShowCard v-for="show in shows" :key="show.id" :show="show" />
+      <ShowCard
+        v-for="show in shows"
+        :key="show.id"
+        :show="show"
+        @update="onShowUpdate"
+      />
     </div>
     <div v-if="total > 0" class="pagination">
       <button type="button" :disabled="!canPrev" @click="prevPage">← Prev</button>
