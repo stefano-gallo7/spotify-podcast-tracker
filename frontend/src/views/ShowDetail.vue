@@ -1,9 +1,9 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { formatDate } from '../utils/format'
 import { createPatchHelper } from '../utils/applyPatch'
 import { getShow, updateShow } from '../api'
+import EpisodeRow from '../components/EpisodeRow.vue'
 
 const route = useRoute()
 
@@ -58,6 +58,14 @@ async function saveNotes() {
   notes.value = show.value.notes ?? ''
 }
 
+function onEpisodeUpdate(updated) {
+  if (!show.value) return
+  const i = show.value.episodes.findIndex((e) => e.uri === updated.uri)
+  if (i !== -1) {
+    show.value.episodes[i] = updated
+  }
+}
+
 // Keep the local notes ref in sync when the server response replaces show.value
 watch(show, (s) => {
   if (s) notes.value = s.notes ?? ''
@@ -92,7 +100,7 @@ onMounted(loadShow)
               :aria-pressed="show.is_favorite"
               @click="toggleFavorite"
             >
-              {{ show.is_favorite ? '★' : '☆' }}
+              {{ show.is_favorite ? '♥' : '♡' }}
             </button>
           </h2>
           <p v-if="progress" class="meta">{{ progress }}</p>
@@ -140,16 +148,16 @@ onMounted(loadShow)
 
       <section class="episodes">
         <h3>Episodes ({{ show.episodes.length }})</h3>
+        <div class="episodes-header" aria-hidden="true">
+          <span class="header-date">Release date</span>
+        </div>
         <ul>
-          <li v-for="episode in show.episodes" :key="episode.uri" class="episode">
-            <span class="ep-played" :class="{ done: episode.is_fully_played }">
-              {{ episode.is_fully_played ? '✓' : '·' }}
-            </span>
-            <span class="ep-name">{{ episode.name }}</span>
-            <span v-if="formatDate(episode.release_date)" class="ep-date">
-              {{ formatDate(episode.release_date) }}
-            </span>
-          </li>
+          <EpisodeRow
+            v-for="episode in show.episodes"
+            :key="episode.uri"
+            :episode="episode"
+            @update="onEpisodeUpdate"
+          />
         </ul>
       </section>
     </article>
@@ -347,34 +355,19 @@ onMounted(loadShow)
   margin: 0;
 }
 
-.episode {
+.episodes-header {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 8px 0;
+  justify-content: flex-end;
+  padding: 0 0 6px;
   border-bottom: 1px solid var(--border);
-  font-size: 14px;
-}
-
-.ep-played {
-  flex-shrink: 0;
-  width: 16px;
+  font-size: 10px;
   color: var(--text);
-  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
-.ep-played.done {
-  color: var(--accent);
-}
-
-.ep-name {
-  flex: 1;
-  color: var(--text-h);
-}
-
-.ep-date {
-  flex-shrink: 0;
-  color: var(--text);
-  white-space: nowrap;
+.header-date {
+  width: 90px;
+  text-align: center;
 }
 </style>

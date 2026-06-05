@@ -61,7 +61,7 @@ function onStatusChange(event) {
             :aria-pressed="show.is_favorite"
             @click.prevent.stop="toggleFavorite"
           >
-            {{ show.is_favorite ? '★' : '☆' }}
+            {{ show.is_favorite ? '♥' : '♡' }}
           </button>
         </h3>
         <p v-if="progress" class="meta">{{ progress }}</p>
