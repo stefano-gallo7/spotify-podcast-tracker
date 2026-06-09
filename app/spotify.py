@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyOAuth
 
-from app.db_models import Episode, Show
+from app.db_models import AppState, Episode, Show
 
 
 SCOPE = "user-library-read user-read-playback-position"
@@ -96,7 +96,11 @@ def populate_show(show: Show, data: dict) -> None:
     show.last_synced_at = now()
 
 
-def populate_episode(episode: Episode, data: dict) -> None:
+def populate_episode(episode: Episode, data: dict) -> bool:
+    """
+    Returns True if the API reports new listening activity since the last sync
+    (fully-played transitioned or resume position advanced).
+    """
     episode.name = data["name"]
     episode.description = data.get("html_description")
     episode.duration_ms = data.get("duration_ms")
@@ -108,13 +112,27 @@ def populate_episode(episode: Episode, data: dict) -> None:
     episode.image_url_big, episode.image_url_medium, episode.image_url_small = _images(data.get("images"))
 
     rp = data.get("resume_point") or {}
-    if rp.get("fully_played"):  # never flip fully_played True -> False
+    new_fully_played = bool(rp.get("fully_played"))
+    new_resume_pos = rp.get("resume_position_ms")
+
+    became_fully_played = new_fully_played and not episode.is_fully_played
+    advanced_resume = (
+        new_resume_pos is not None
+        and new_resume_pos > (episode.resume_position_ms or 0)
+    )
+
+    if new_fully_played:  # never flip fully_played True -> False
         episode.is_fully_played = True
-    if rp.get("resume_position_ms") is not None:
-        episode.resume_position_ms = rp["resume_position_ms"]
+    if new_resume_pos is not None:
+        episode.resume_position_ms = new_resume_pos
 
     episode.api_status = "fetched"
     episode.last_synced_at = now()
+    return became_fully_played or advanced_resume
+
+
+def _initial_sync_done(session) -> bool:
+    return session.query(AppState.initial_sync_completed_at).scalar() is not None
 
 
 def has_listen_evidence(ep_data: dict) -> bool:
@@ -151,6 +169,7 @@ def sync_show_episodes(sp: spotipy.Spotify, session, show: Show, stats: dict) ->
     Sets `show.api_status = "unavailable"` if the show endpoint 404s.
     """
     show_id = show.uri.split(":")[-1]
+    gate = _initial_sync_done(session)
     offset = 0
     while True:
         try:
@@ -179,9 +198,13 @@ def sync_show_episodes(sp: spotipy.Spotify, session, show: Show, stats: dict) ->
                 )
                 session.add(episode)
                 populate_episode(episode, ep_data)
+                if gate:
+                    episode.last_played_at = now()
                 stats["episodes_inserted"] += 1
             else:
-                populate_episode(episode, ep_data)
+                new_activity = populate_episode(episode, ep_data)
+                if gate and new_activity:
+                    episode.last_played_at = now()
                 stats["episodes_updated"] += 1
 
         if page["next"] is None:

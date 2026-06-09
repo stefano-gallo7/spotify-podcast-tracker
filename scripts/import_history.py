@@ -100,7 +100,11 @@ def _update_episode(episode: Episode, entry: dict) -> bool:
     is_fully_played = entry["is_fully_played"]
     changed = False
 
-    if episode.last_played_at is None or listened_at > episode.last_played_at:
+    if (
+        episode.last_played_at is None
+        or episode.discovered_via == "api"
+        or listened_at > episode.last_played_at
+    ):
         episode.last_played_at = listened_at
         episode.connection_country = entry.get("connection_country")
         changed = True

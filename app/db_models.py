@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, String, Integer, SmallInteger, Boolean, DateTime, Date,
-    ForeignKey, Text, Table, CheckConstraint, case, func, select
+    ForeignKey, Text, Table, CheckConstraint, func, select
 )
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
@@ -87,19 +87,8 @@ class Show(Base):
 
     @last_played_at.expression
     def last_played_at(cls):
-        point_zero = select(AppState.initial_sync_completed_at).scalar_subquery()
         return (
-            select(
-                func.max(
-                    func.coalesce(
-                        Episode.last_played_at,
-                        case(
-                            (Episode.created_at > point_zero, Episode.created_at),
-                            else_=None,
-                        ),
-                    )
-                )
-            )
+            select(func.max(Episode.last_played_at))
             .where(Episode.show_id == cls.id)
             .scalar_subquery()
         )
