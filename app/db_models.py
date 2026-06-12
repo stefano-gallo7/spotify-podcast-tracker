@@ -150,10 +150,31 @@ class Episode(Base):
 
 
 class AppState(Base):
-    """Singleton table for app-level state. Only one row, with id=1."""
+    """Singleton table for app-level state + user-tunable scheduler config.
+
+    Only one row, with id=1. The config columns below drive the scheduled
+    refresh job (`scripts/scheduled_refresh.py`); they ship with sane defaults
+    and are editable via the `/api/config` endpoints.
+    """
 
     __tablename__ = "app_state"
     __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
 
     id = Column(Integer, primary_key=True)
     initial_sync_completed_at = Column(DateTime, nullable=True)
+
+    # Per-status refresh cadence (days between syncs). active/paused get a full
+    # refresh, finished gets a light (metadata-only) refresh; dropped is skipped.
+    refresh_active_interval_days = Column(Integer, default=1, nullable=False)
+    refresh_paused_interval_days = Column(Integer, default=7, nullable=False)
+    refresh_finished_interval_days = Column(Integer, default=30, nullable=False)
+
+    # Automatic status transitions.
+    auto_finish_enabled = Column(Boolean, default=True, nullable=False)
+    auto_pause_enabled = Column(Boolean, default=True, nullable=False)
+    auto_pause_after_days = Column(Integer, default=183, nullable=False)  # ~6 months
+    auto_reactivate_enabled = Column(Boolean, default=True, nullable=False)
+
+    # In-process scheduler.
+    scheduler_enabled = Column(Boolean, default=True, nullable=False)
+    scheduler_run_hour = Column(SmallInteger, default=0, nullable=False)  # 0-23, local time

@@ -1,23 +1,16 @@
 import argparse
 
-from spotipy.exceptions import SpotifyException
-
 from app.db import SessionLocal
 from app.db_models import Show
-from app.spotify import (
-    auto_finish_shows,
-    call_with_retry,
-    make_client,
-    populate_show,
-    sync_show_episodes,
-)
+from app.spotify import auto_finish_shows, make_client, refresh_show
 
 
 def refresh(session, sp) -> dict:
     """
     Re-sync shows that are already enriched: pull fresh metadata, detect
     publisher-side new episodes via total_episodes growth, and update
-    listening progress for known episodes.
+    listening progress for known episodes. Every show gets a full refresh;
+    `scheduled_refresh.py` is the tiered, status-aware variant.
     """
     stats = {
         "shows_refreshed": 0,
@@ -41,26 +34,7 @@ def refresh(session, sp) -> dict:
     for show in shows:
         try:
             print(f"Refreshing '{show.name}'...")
-
-            try:
-                show_data = call_with_retry(sp.show, show.uri)
-            except SpotifyException as e:
-                if e.http_status == 404:
-                    show.api_status = "unavailable"
-                    stats["shows_unavailable"] += 1
-                    session.commit()
-                    continue
-                raise
-
-            prev_total = show.total_episodes or 0
-            new_total = show_data.get("total_episodes") or 0
-            if new_total > prev_total:
-                show.has_new_episodes = True
-                stats["shows_with_new_episodes"] += 1
-
-            populate_show(show, show_data)
-            sync_show_episodes(sp, session, show, stats)
-            stats["shows_refreshed"] += 1
+            refresh_show(sp, session, show, stats, full=True)
             session.commit()
         except Exception as e:
             print(f"  ! failed on '{show.name}': {e}")

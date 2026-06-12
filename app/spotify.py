@@ -6,7 +6,7 @@ refresh script (periodic re-sync of metadata + listening progress).
 """
 
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import spotipy
 from dotenv import load_dotenv
@@ -140,24 +140,65 @@ def has_listen_evidence(ep_data: dict) -> bool:
     return bool(rp.get("fully_played")) or (rp.get("resume_position_ms") or 0) > 0
 
 
-def auto_finish_shows(session) -> int:
+def auto_finish_shows(session, *, preview=False):
     """
     Mark shows as 'finished' when the user has fully played every known episode.
     Skips shows whose episode count isn't known yet (total_episodes is None/0).
     Skips shows the user already classified ('finished' or 'dropped').
-    Returns the number of rows updated.
+    Returns the number of rows updated, or the matching shows when preview=True.
     """
-    return (
-        session.query(Show)
-        .filter(
-            Show.status.notin_(["finished", "dropped"]),
-            Show.total_episodes > 0,
-            ~Show.has_more_episodes,
-        )
-        .update(
-            {"status": "finished", "status_changed_at": now()},
-            synchronize_session=False,
-        )
+    q = session.query(Show).filter(
+        Show.status.notin_(["finished", "dropped"]),
+        Show.total_episodes > 0,
+        ~Show.has_more_episodes,
+    )
+    if preview:
+        return q.all()
+    return q.update(
+        {"status": "finished", "status_changed_at": now()},
+        synchronize_session=False,
+    )
+
+
+def auto_pause_stale_shows(session, after_days: int, *, preview=False):
+    """
+    Move 'active' shows to 'paused' when nothing has been played for `after_days`.
+    Skips shows with no last_played_at stamp at all (a NULL means we've never
+    observed a play, so 'inactivity' is undefined — respects the point-zero gate).
+    Returns the number of rows updated, or the matching shows when preview=True.
+    """
+    cutoff = now() - timedelta(days=after_days)
+    q = session.query(Show).filter(
+        Show.status == "active",
+        Show.last_played_at.isnot(None),
+        Show.last_played_at < cutoff,
+    )
+    if preview:
+        return q.all()
+    return q.update(
+        {"status": "paused", "status_changed_at": now()},
+        synchronize_session=False,
+    )
+
+
+def auto_reactivate_shows(session, *, preview=False):
+    """
+    Move 'paused' shows back to 'active' when they've been played *since* being
+    paused. `status_changed_at` records when the pause happened; a later
+    `last_played_at` (stamped by `sync_show_episodes` on observed activity) means
+    the user re-engaged. Returns rows updated, or the matching shows when preview=True.
+    """
+    q = session.query(Show).filter(
+        Show.status == "paused",
+        Show.status_changed_at.isnot(None),
+        Show.last_played_at.isnot(None),
+        Show.last_played_at > Show.status_changed_at,
+    )
+    if preview:
+        return q.all()
+    return q.update(
+        {"status": "active", "status_changed_at": now()},
+        synchronize_session=False,
     )
 
 
@@ -210,3 +251,50 @@ def sync_show_episodes(sp: spotipy.Spotify, session, show: Show, stats: dict) ->
         if page["next"] is None:
             break
         offset += 50
+
+
+def refresh_show(
+    sp: spotipy.Spotify,
+    session,
+    show: Show,
+    stats: dict,
+    *,
+    full: bool,
+    escalate_on_new: bool = False,
+) -> None:
+    """
+    Refresh a single already-enriched show.
+
+    `full=True` does a complete pass: fresh metadata + paginate every episode to
+    pick up listening progress (the expensive path). `full=False` does a light
+    pass: metadata only, plus the cheap `total_episodes`-growth check to flag
+    publisher-side new episodes — no episode pagination.
+
+    `escalate_on_new` promotes a light pass to a full one *for this run* when new
+    episodes are detected, so a show that's normally only light-refreshed still
+    captures any listening that the new episodes triggered.
+
+    Mutates `stats`; does not commit (the caller owns the transaction).
+    """
+    try:
+        show_data = call_with_retry(sp.show, show.uri)
+    except SpotifyException as e:
+        if e.http_status == 404:
+            show.api_status = "unavailable"
+            stats["shows_unavailable"] += 1
+            return
+        raise
+
+    prev_total = show.total_episodes or 0
+    new_total = show_data.get("total_episodes") or 0
+    grew = new_total > prev_total
+    if grew:
+        show.has_new_episodes = True
+        stats["shows_with_new_episodes"] += 1
+
+    populate_show(show, show_data)
+
+    if full or (grew and escalate_on_new):
+        sync_show_episodes(sp, session, show, stats)
+
+    stats["shows_refreshed"] += 1

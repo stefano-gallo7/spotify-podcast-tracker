@@ -111,3 +111,38 @@ class EpisodeUpdate(BaseModel):
     is_favorite: bool | None = None
     is_archived: bool | None = None
     notes: str | None = None
+
+
+class Settings(BaseModel):
+    """User-tunable app settings (the configurable subset of AppState).
+
+    Flat, to match the generic-PATCH convention. Today these are all about the
+    scheduled refresh; the route is deliberately `/api/settings` so it can grow
+    into a comprehensive settings surface, with grouping done presentationally.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    refresh_active_interval_days: int
+    refresh_paused_interval_days: int
+    refresh_finished_interval_days: int
+    auto_finish_enabled: bool
+    auto_pause_enabled: bool
+    auto_pause_after_days: int
+    auto_reactivate_enabled: bool
+    scheduler_enabled: bool
+    scheduler_run_hour: int
+
+
+class SettingsUpdate(BaseModel):
+    """Partial update for app settings. All fields optional."""
+
+    refresh_active_interval_days: int | None = Field(None, ge=1)
+    refresh_paused_interval_days: int | None = Field(None, ge=1)
+    refresh_finished_interval_days: int | None = Field(None, ge=1)
+    auto_finish_enabled: bool | None = None
+    auto_pause_enabled: bool | None = None
+    auto_pause_after_days: int | None = Field(None, ge=1)
+    auto_reactivate_enabled: bool | None = None
+    scheduler_enabled: bool | None = None
+    scheduler_run_hour: int | None = Field(None, ge=0, le=23)
