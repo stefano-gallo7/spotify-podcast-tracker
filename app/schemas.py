@@ -113,6 +113,24 @@ class EpisodeUpdate(BaseModel):
     notes: str | None = None
 
 
+class SpotifySearchResult(BaseModel):
+    """One show from a Spotify catalogue search, shaped for the add-show modal."""
+
+    id: str  # bare Spotify ID (URI's last segment)
+    uri: str  # full spotify:show:...
+    name: str
+    description_excerpt: str | None = None
+    image_url_small: str | None = None
+    total_episodes: int | None = None
+    already_in_library: bool
+
+
+class AddShowRequest(BaseModel):
+    """Request body for adding a show to the library by its Spotify URI."""
+
+    uri: str
+
+
 class Settings(BaseModel):
     """User-tunable app settings (the configurable subset of AppState).
 

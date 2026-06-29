@@ -5,6 +5,7 @@ Used by both the enrichment script (initial fill-in after import) and the
 refresh script (periodic re-sync of metadata + listening progress).
 """
 
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 
@@ -27,6 +28,29 @@ def now() -> datetime:
 def make_client() -> spotipy.Spotify:
     load_dotenv()
     return spotipy.Spotify(auth_manager=SpotifyOAuth(scope=SCOPE))
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def description_excerpt(data: dict, max_len: int = 80) -> str | None:
+    """Plain-text, truncated excerpt of a show/episode description.
+
+    Strips HTML tags and collapses whitespace, then cuts to `max_len` chars on a
+    word boundary with an ellipsis. Prefers `description` (already plain) and
+    falls back to `html_description`.
+    """
+    raw = data.get("description") or data.get("html_description")
+    if not raw:
+        return None
+    text = _WHITESPACE_RE.sub(" ", _TAG_RE.sub(" ", raw)).strip()
+    if not text:
+        return None
+    if len(text) <= max_len:
+        return text
+    clipped = text[:max_len].rsplit(" ", 1)[0]
+    return f"{clipped}…"
 
 
 def call_with_retry(fn, *args, **kwargs):

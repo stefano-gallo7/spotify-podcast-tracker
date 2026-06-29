@@ -1,13 +1,14 @@
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.db import get_session
+from app.db import SessionLocal, get_session
 from app.db_models import Show, Tag
-from app.schemas import PaginatedShows, ShowDetail, ShowStatus, ShowUpdate
+from app.schemas import AddShowRequest, PaginatedShows, ShowDetail, ShowStatus, ShowSummary, ShowUpdate
+from app.spotify import call_with_retry, make_client, populate_show, sync_show_episodes
 
 router = APIRouter(prefix="/api/shows", tags=["shows"])
 
@@ -17,6 +18,25 @@ SortOrder = Literal["asc", "desc"]
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _scan_episodes(show_id: int) -> None:
+    """Background job: scan a freshly added show for already-played episodes.
+
+    Runs *after* the POST response is sent, so it owns its own DB session and
+    Spotify client — the request's session is already closed by this point.
+    """
+    session = SessionLocal()
+    try:
+        show = session.query(Show).filter(Show.id == show_id).first()
+        if show is None:
+            return
+        sp = make_client()
+        stats = {"episodes_inserted": 0, "episodes_updated": 0}
+        sync_show_episodes(sp, session, show, stats)
+        session.commit()
+    finally:
+        session.close()
 
 
 @router.get("", response_model=PaginatedShows)
@@ -65,6 +85,35 @@ def list_shows(
 
     items = query.limit(limit).offset(offset).all()
     return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.post("", response_model=ShowSummary, status_code=201)
+def add_show(
+    body: AddShowRequest,
+    background_tasks: BackgroundTasks,
+    response: Response,
+    session: Session = Depends(get_session),
+):
+    uri = body.uri
+    if not uri.startswith("spotify:show:"):
+        raise HTTPException(status_code=422, detail="uri must start with 'spotify:show:'")
+
+    # Idempotent: adding a show that's already tracked returns it unchanged (200).
+    existing = session.query(Show).filter(Show.uri == uri).first()
+    if existing is not None:
+        response.status_code = 200
+        return existing
+
+    show_data = call_with_retry(make_client().show, uri)
+    show = Show(status="active")
+    populate_show(show, show_data)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    # Scan for already-played episodes after the response is sent.
+    background_tasks.add_task(_scan_episodes, show.id)
+    return show
 
 
 @router.get("/{show_id}", response_model=ShowDetail)
