@@ -36,3 +36,15 @@ export function updateEpisode(id, patch) {
     body: JSON.stringify(patch),
   })
 }
+
+export function searchSpotifyShows(q) {
+  return request(`/api/spotify/search?q=${encodeURIComponent(q)}`)
+}
+
+export function addShowByUri(uri) {
+  return request('/api/shows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uri }),
+  })
+}

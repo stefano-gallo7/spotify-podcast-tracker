@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import ShowCard from '../components/ShowCard.vue'
+import AddShowModal from '../components/AddShowModal.vue'
 import { listShows } from '../api'
 
 const PAGE_SIZE = 20
@@ -17,6 +18,14 @@ const hasMore = ref(false)
 const isFavorite = ref(false)
 const sort = ref('last_played')
 const order = ref('desc')
+
+const isAddOpen = ref(false)
+const addButton = ref(null)
+
+function closeAddModal() {
+  addButton.value?.focus() // Return focus to the button that opened the modal, after it unmounts.
+  isAddOpen.value = false
+}
 
 let debounceTimer = null
 
@@ -69,6 +78,11 @@ function onShowUpdate(updated) {
   }
 }
 
+function onShowAdded(show) {
+  shows.value.unshift(show)
+  total.value += 1
+}
+
 onMounted(loadShows)
 
 watch(q, () => {
@@ -95,6 +109,17 @@ watch([status, hasMore, isFavorite, sort, order], () => {
       <p v-if="!loading" class="count">
         {{ total }} show{{ total === 1 ? '' : 's' }}
       </p>
+      <button
+        ref="addButton"
+        type="button"
+        class="add-button"
+        title="Add a show"
+        aria-label="Add a show"
+        @click="isAddOpen = true">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        </svg>
+      </button>
     </div>
 
     <div class="filter-row">
@@ -153,6 +178,7 @@ watch([status, hasMore, isFavorite, sort, order], () => {
       <button type="button" :disabled="!canNext" @click="nextPage">Next →</button>
     </div>
   </template>
+  <AddShowModal v-if="isAddOpen" @close="closeAddModal" @added="onShowAdded" />
 </template>
 
 <style scoped>
@@ -235,6 +261,24 @@ select {
 }
 
 .order-button:hover {
+  border-color: var(--accent);
+}
+
+.add-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.add-button:hover {
   border-color: var(--accent);
 }
 
