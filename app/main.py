@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routes import episodes, settings, shows, spotify
+from app.routes import episodes, settings, shows, spotify, stats
 from app.scheduler import start_scheduler, stop_scheduler
 
 
@@ -32,6 +32,7 @@ app.include_router(shows.router)
 app.include_router(episodes.router)
 app.include_router(settings.router)
 app.include_router(spotify.router)
+app.include_router(stats.router)
 
 
 @app.get("/")

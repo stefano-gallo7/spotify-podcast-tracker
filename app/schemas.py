@@ -164,3 +164,60 @@ class SettingsUpdate(BaseModel):
     auto_reactivate_enabled: bool | None = None
     scheduler_enabled: bool | None = None
     scheduler_run_hour: int | None = Field(None, ge=0, le=23)
+
+
+# --- Stats / dashboard (read-only aggregates) -------------------------------
+# Listening time is an *estimate*: SUM(COALESCE(ms_played, duration_ms if the
+# episode is fully played, resume_position_ms, 0)). See DASHBOARD_PLAN.md.
+
+
+class StatusCount(BaseModel):
+    status: str
+    count: int
+
+
+class RatingCount(BaseModel):
+    rating: int          # 1..5
+    count: int
+
+
+class StatsOverview(BaseModel):
+    # listening time (proxy-based)
+    estimated_ms_played: int
+    measured_ms_played: int
+    estimated_from_duration_count: int
+    # counts
+    episodes_played: int
+    episodes_in_progress: int
+    total_episodes: int
+    total_shows: int
+    favorite_shows: int
+    favorite_episodes: int
+    # ratings
+    average_rating: float | None = None
+    rated_count: int
+    unrated_count: int
+    # breakdowns
+    status_breakdown: list[StatusCount]
+    ratings_distribution: list[RatingCount]
+
+
+class TopShow(BaseModel):
+    id: int
+    name: str
+    image_url_small: str | None = None
+    estimated_ms_played: int
+    listened_count: int
+
+
+class ActivityPoint(BaseModel):
+    month: str           # "YYYY-MM"
+    episodes: int
+    estimated_ms: int
+
+
+class TagStat(BaseModel):
+    tag: str
+    shows: int
+    episodes_played: int
+    estimated_ms_played: int
