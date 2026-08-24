@@ -48,3 +48,24 @@ export function addShowByUri(uri) {
     body: JSON.stringify({ uri }),
   })
 }
+
+// --- Stats / dashboard ------------------------------------------------------
+
+export function getStatsOverview() {
+  return request('/api/stats/overview')
+}
+
+export function getTopShows({ limit = 10, by = 'hours' } = {}) {
+  const query = new URLSearchParams({ limit, by })
+  return request(`/api/stats/top-shows?${query}`)
+}
+
+export function getActivity({ months = 12, metric = 'episodes' } = {}) {
+  const query = new URLSearchParams({ months, metric })
+  return request(`/api/stats/activity?${query}`)
+}
+
+export function getStatsByTag({ by = 'hours' } = {}) {
+  const query = new URLSearchParams({ by })
+  return request(`/api/stats/by-tag?${query}`)
+}
