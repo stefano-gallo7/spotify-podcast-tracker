@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -9,6 +9,7 @@ from app.db import get_session
 from app.db_models import Episode, Show, Tag, show_tags
 from app.schemas import (
     ActivityPoint,
+    ActivitySeries,
     RatingCount,
     StatsOverview,
     StatusCount,
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 # Protocol-only Literals (live with the route, per convention).
 TopShowsBy = Literal["hours", "episodes"]
-ActivityMetric = Literal["episodes", "hours"]
+ActivityResolution = Literal["month", "week"]
 TagStatBy = Literal["hours", "episodes"]
 
 # All statuses/ratings we always want present in breakdowns, even at zero.
@@ -30,6 +31,12 @@ _ALL_RATINGS = (1, 2, 3, 4, 5)
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _month_start(index: int) -> datetime:
+    """First day of the month for a year*12+(month-1) index."""
+    y, m0 = divmod(index, 12)
+    return datetime(y, m0 + 1, 1)
 
 
 # Estimated per-episode listening time. Defined once; reused everywhere hours
@@ -144,43 +151,91 @@ def top_shows(
     ]
 
 
-@router.get("/activity", response_model=list[ActivityPoint])
+@router.get("/activity", response_model=ActivitySeries)
 def activity(
     session: Session = Depends(get_session),
-    months: int = Query(12, ge=1, le=60),
-    metric: ActivityMetric = Query("episodes"),  # both series returned; hints the default chart
+    months: int = Query(12, ge=0, le=120, description="Window length in months; 0 = all time"),
+    resolution: ActivityResolution = Query("month"),
+    end_offset: int = Query(0, ge=0, description="Months to shift the window end back from now; 0 = ends at the current month"),
 ):
-    # Window start = first day of the month, (months - 1) months back.
+    # Both series (episodes + estimated_ms) are always returned; the client
+    # picks which to plot. This is a recency view — each episode lands in one
+    # bucket by its single last_played_at, so it approximates, not measures.
     now = _now()
-    total = (now.year * 12 + (now.month - 1)) - (months - 1)
-    start_year, start_month = divmod(total, 12)
-    start_month += 1
-    cutoff = datetime(start_year, start_month, 1)
+    now_index = now.year * 12 + (now.month - 1)
+    earliest = session.query(func.min(Episode.last_played_at)).scalar()
 
-    month_expr = func.strftime("%Y-%m", Episode.last_played_at)
+    if months == 0:
+        # All time: one window from the earliest play to now; no paging.
+        if earliest is None:
+            return ActivitySeries(points=[], has_older=False, has_newer=False)
+        start_index = earliest.year * 12 + (earliest.month - 1)
+        end_index = now_index
+        has_older = False
+        has_newer = False
+    else:
+        # The window END is anchored `end_offset` months back from now; the
+        # window length only changes how far back `start` reaches. So changing
+        # resolution or window length keeps the end fixed (paging is preserved).
+        end_index = now_index - end_offset
+        start_index = end_index - (months - 1)
+        start_dt = _month_start(start_index)
+        has_older = earliest is not None and earliest < start_dt
+        has_newer = end_offset > 0
+
+    start = _month_start(start_index)
+    end_exclusive = _month_start(end_index + 1)  # first day after the window's last month
+
+    # Bucket by month ("YYYY-MM") or by week-start Monday ("YYYY-MM-DD"). ISO
+    # week (%V) may be missing on the bundled SQLite, so derive the Monday.
+    if resolution == "week":
+        bucket_expr = func.date(Episode.last_played_at, "-6 days", "weekday 1")
+    else:
+        bucket_expr = func.strftime("%Y-%m", Episode.last_played_at)
+
     rows = dict(
-        (m, (episodes, est))
-        for m, episodes, est in session.query(
-            month_expr.label("month"),
+        (bucket, (episodes, est))
+        for bucket, episodes, est in session.query(
+            bucket_expr.label("bucket"),
             func.count().label("episodes"),
             func.coalesce(func.sum(_ESTIMATED_MS), 0).label("estimated_ms"),
         )
-        .filter(Episode.last_played_at.isnot(None), Episode.last_played_at >= cutoff)
-        .group_by(month_expr)
+        .filter(
+            Episode.last_played_at.isnot(None),
+            Episode.last_played_at >= start,
+            Episode.last_played_at < end_exclusive,
+        )
+        .group_by(bucket_expr)
         .all()
     )
 
-    # Gap-fill a continuous month series so the line chart has no holes.
+    # Gap-fill a continuous series so the line chart has no holes. Cap the tail
+    # at `now` so the current window doesn't trail empty future buckets.
     points: list[ActivityPoint] = []
-    y, m = start_year, start_month
-    while (y, m) <= (now.year, now.month):
-        label = f"{y:04d}-{m:02d}"
-        episodes, est = rows.get(label, (0, 0))
-        points.append(ActivityPoint(month=label, episodes=int(episodes), estimated_ms=int(est)))
-        m += 1
-        if m > 12:
-            m, y = 1, y + 1
-    return points
+    if resolution == "week":
+        last_day = min(end_exclusive - timedelta(days=1), now)
+        cur = (start - timedelta(days=start.weekday())).date()  # Monday of start's week
+        last = (last_day - timedelta(days=last_day.weekday())).date()
+        while cur <= last:
+            label = cur.isoformat()
+            episodes, est = rows.get(label, (0, 0))
+            points.append(ActivityPoint(bucket=label, episodes=int(episodes), estimated_ms=int(est)))
+            cur += timedelta(days=7)
+    else:
+        idx = start_index
+        while idx <= end_index:
+            label = _month_start(idx).strftime("%Y-%m")
+            episodes, est = rows.get(label, (0, 0))
+            points.append(ActivityPoint(bucket=label, episodes=int(episodes), estimated_ms=int(est)))
+            idx += 1
+
+    return ActivitySeries(
+        points=points,
+        has_older=has_older,
+        has_newer=has_newer,
+        start=_month_start(start_index).strftime("%Y-%m"),
+        end=_month_start(end_index).strftime("%Y-%m"),
+    )
 
 
 @router.get("/by-tag", response_model=list[TagStat])

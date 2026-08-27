@@ -12,7 +12,7 @@ import SegmentedControl from '../components/SegmentedControl.vue'
 
 const overview = ref(null)
 const topShows = ref([])
-const activity = ref([])
+const activity = ref({ points: [], has_older: false, has_newer: false, start: null, end: null })
 const tags = ref([])
 const loading = ref(true)
 const error = ref(null)
@@ -24,6 +24,34 @@ const METRIC_OPTS = [
   { label: 'Episodes', value: 'episodes' },
 ]
 
+const activityMetric = ref('episodes')
+const activityResolution = ref('month')
+const activityMonths = ref(12)
+// Window end anchored this many months back from now; paging shifts it, but
+// changing resolution / window length leaves it put (the end stays fixed).
+const activityEndOffset = ref(0)
+// Weekly over "All" is too noisy to be useful — disable it there and fall back
+// to monthly, remembering the weekly preference for the shorter windows.
+const effectiveResolution = computed(() =>
+  activityMonths.value === 0 ? 'month' : activityResolution.value,
+)
+const resolutionModel = computed({
+  get: () => effectiveResolution.value,
+  set: (v) => {
+    activityResolution.value = v
+  },
+})
+const resOptions = computed(() => [
+  { label: 'Monthly', value: 'month' },
+  { label: 'Weekly', value: 'week', disabled: activityMonths.value === 0 },
+])
+const WINDOW_OPTS = [
+  { label: '3m', value: 3 },
+  { label: '6m', value: 6 },
+  { label: '12m', value: 12 },
+  { label: 'All', value: 0 },
+]
+
 const H = 3600000
 
 onMounted(async () => {
@@ -31,7 +59,7 @@ onMounted(async () => {
     const [ov, top, act, byTag] = await Promise.all([
       getStatsOverview(),
       getTopShows({ limit: 10, by: topShowsBy.value }),
-      getActivity({ months: 12, metric: 'episodes' }),
+      getActivity({ months: activityMonths.value, resolution: effectiveResolution.value }),
       getStatsByTag({ by: tagsBy.value }),
     ])
     overview.value = ov
@@ -63,6 +91,34 @@ watch(tagsBy, async (by) => {
   }
 })
 
+// Metric is a pure client-side prop swap. Resolution/window/paging change the
+// fetched window, so they refetch — but the end stays anchored, so changing
+// resolution or window length does NOT reset the paging position.
+async function loadActivity() {
+  try {
+    activity.value = await getActivity({
+      months: activityMonths.value,
+      resolution: effectiveResolution.value,
+      endOffset: activityEndOffset.value,
+    })
+  } catch (e) {
+    /* keep current data */
+  }
+}
+watch([effectiveResolution, activityMonths], loadActivity)
+function pageOlder() {
+  if (activity.value.has_older) {
+    activityEndOffset.value += activityMonths.value
+    loadActivity()
+  }
+}
+function pageNewer() {
+  if (activity.value.has_newer) {
+    activityEndOffset.value = Math.max(0, activityEndOffset.value - activityMonths.value)
+    loadActivity()
+  }
+}
+
 const tiles = computed(() => {
   const o = overview.value
   if (!o) return []
@@ -92,6 +148,21 @@ const tiles = computed(() => {
 })
 
 const hasRatings = computed(() => overview.value && overview.value.rated_count > 0)
+
+function monthToDate(ym) {
+  const [y, m] = ym.split('-').map(Number)
+  return new Date(y, m - 1, 1)
+}
+const activityRange = computed(() => {
+  const a = activity.value
+  if (!a.start || !a.end) return ''
+  const s = monthToDate(a.start)
+  const e = monthToDate(a.end)
+  const sM = s.toLocaleDateString(undefined, { month: 'short' })
+  const eM = e.toLocaleDateString(undefined, { month: 'short' })
+  if (s.getFullYear() === e.getFullYear()) return `${sM}–${eM} ${e.getFullYear()}`
+  return `${sM} ${s.getFullYear()} – ${eM} ${e.getFullYear()}`
+})
 </script>
 
 <template>
@@ -127,8 +198,20 @@ const hasRatings = computed(() => overview.value && overview.value.rated_count >
         </div>
         
         <div class="chart-card full">
-          <h3>Activity <span class="cap">episodes/month · approximate</span></h3>
-          <ActivityLine :data="activity" metric="episodes" />
+          <div class="card-head">
+            <h3>Activity <span class="cap">by last-played · approximate</span></h3>
+            <div class="head-controls">
+              <div v-if="activityMonths !== 0" class="period-nav">
+                <button class="nav-arrow" :disabled="!activity.has_older" aria-label="Older" @click="pageOlder">‹</button>
+                <span class="period-label">{{ activityRange }}</span>
+                <button class="nav-arrow" :disabled="!activity.has_newer" aria-label="Newer" @click="pageNewer">›</button>
+              </div>
+              <SegmentedControl v-model="activityMetric" :options="METRIC_OPTS" />
+              <SegmentedControl v-model="resolutionModel" :options="resOptions" />
+              <SegmentedControl v-model="activityMonths" :options="WINDOW_OPTS" />
+            </div>
+          </div>
+          <ActivityLine :data="activity.points" :metric="activityMetric" />
         </div>
         
         <div v-if="hasRatings" class="chart-card">
@@ -218,6 +301,48 @@ const hasRatings = computed(() => overview.value && overview.value.rated_count >
 
 .card-head h3 {
   margin: 0;
+}
+
+.head-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.period-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-arrow {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.nav-arrow:hover:not(:disabled) {
+  color: var(--text-h);
+  background: var(--accent-bg);
+}
+
+.nav-arrow:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.period-label {
+  font-size: 12px;
+  color: var(--text);
+  min-width: 96px;
+  text-align: center;
 }
 
 .cap {

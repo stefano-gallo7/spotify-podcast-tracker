@@ -211,9 +211,17 @@ class TopShow(BaseModel):
 
 
 class ActivityPoint(BaseModel):
-    month: str           # "YYYY-MM"
+    bucket: str          # "YYYY-MM" (month) or week-start "YYYY-MM-DD"
     episodes: int
     estimated_ms: int
+
+
+class ActivitySeries(BaseModel):
+    points: list[ActivityPoint]
+    has_older: bool      # is there data before this window (enable ◀)
+    has_newer: bool      # is this window paged back from the present (enable ▶)
+    start: str | None = None   # window start month "YYYY-MM" (for the period label)
+    end: str | None = None     # window end month "YYYY-MM"
 
 
 class TagStat(BaseModel):

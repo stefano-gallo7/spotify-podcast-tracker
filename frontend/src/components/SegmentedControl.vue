@@ -15,6 +15,7 @@ defineEmits(['update:modelValue'])
       type="button"
       class="seg"
       :class="{ active: opt.value === modelValue }"
+      :disabled="opt.disabled"
       @click="$emit('update:modelValue', opt.value)"
     >
       {{ opt.label }}
@@ -51,7 +52,12 @@ defineEmits(['update:modelValue'])
   font-weight: 500;
 }
 
-.seg:hover:not(.active) {
+.seg:hover:not(.active):not(:disabled) {
   color: var(--text-h);
+}
+
+.seg:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 </style>

@@ -60,8 +60,8 @@ export function getTopShows({ limit = 10, by = 'hours' } = {}) {
   return request(`/api/stats/top-shows?${query}`)
 }
 
-export function getActivity({ months = 12, metric = 'episodes' } = {}) {
-  const query = new URLSearchParams({ months, metric })
+export function getActivity({ months = 12, resolution = 'month', endOffset = 0 } = {}) {
+  const query = new URLSearchParams({ months, resolution, end_offset: endOffset })
   return request(`/api/stats/activity?${query}`)
 }
 

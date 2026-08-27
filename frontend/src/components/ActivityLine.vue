@@ -14,7 +14,7 @@ const props = defineProps({
 const theme = useChartTheme()
 
 const chartData = computed(() => ({
-  labels: props.data.map((p) => p.month),
+  labels: props.data.map((p) => p.bucket),
   datasets: [
     {
       data: props.data.map((p) =>
