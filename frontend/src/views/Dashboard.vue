@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { getStatsOverview, getTopShows, getActivity, getStatsByTag } from '../api.js'
 import { formatHours } from '../utils/format.js'
 import StatTile from '../components/StatTile.vue'
@@ -8,6 +8,7 @@ import RatingsBar from '../components/RatingsBar.vue'
 import TopShowsBar from '../components/TopShowsBar.vue'
 import ActivityLine from '../components/ActivityLine.vue'
 import TagBreakdown from '../components/TagBreakdown.vue'
+import SegmentedControl from '../components/SegmentedControl.vue'
 
 const overview = ref(null)
 const topShows = ref([])
@@ -16,15 +17,22 @@ const tags = ref([])
 const loading = ref(true)
 const error = ref(null)
 
+const topShowsBy = ref('hours')
+const tagsBy = ref('hours')
+const METRIC_OPTS = [
+  { label: 'Hours', value: 'hours' },
+  { label: 'Episodes', value: 'episodes' },
+]
+
 const H = 3600000
 
 onMounted(async () => {
   try {
     const [ov, top, act, byTag] = await Promise.all([
       getStatsOverview(),
-      getTopShows({ limit: 10, by: 'hours' }),
+      getTopShows({ limit: 10, by: topShowsBy.value }),
       getActivity({ months: 12, metric: 'episodes' }),
-      getStatsByTag({ by: 'hours' }),
+      getStatsByTag({ by: tagsBy.value }),
     ])
     overview.value = ov
     topShows.value = top
@@ -34,6 +42,24 @@ onMounted(async () => {
     error.value = 'Failed to load dashboard.'
   } finally {
     loading.value = false
+  }
+})
+
+// Toggle → refetch (the server re-ranks / re-filters per metric). Keep the
+// existing chart on a failed refetch rather than blanking it.
+watch(topShowsBy, async (by) => {
+  try {
+    topShows.value = await getTopShows({ limit: 10, by })
+  } catch (e) {
+    /* keep current data */
+  }
+})
+
+watch(tagsBy, async (by) => {
+  try {
+    tags.value = await getStatsByTag({ by })
+  } catch (e) {
+    /* keep current data */
   }
 })
 
@@ -93,8 +119,11 @@ const hasRatings = computed(() => overview.value && overview.value.rated_count >
         </div>
         
         <div class="chart-card wide">
-          <h3>Top shows <span class="cap">by listening time</span></h3>
-          <TopShowsBar :data="topShows" metric="hours" />
+          <div class="card-head">
+            <h3>Top shows <span class="cap">by {{topShowsBy}} listened</span></h3>
+            <SegmentedControl v-model="topShowsBy" :options="METRIC_OPTS" />
+          </div>
+          <TopShowsBar :data="topShows" :metric="topShowsBy" />
         </div>
         
         <div class="chart-card full">
@@ -108,8 +137,11 @@ const hasRatings = computed(() => overview.value && overview.value.rated_count >
         </div>
 
         <div v-if="tags.length" class="chart-card full">
-          <h3>By tag <span class="cap">by listening time</span></h3>
-          <TagBreakdown :data="tags" metric="hours" />
+          <div class="card-head">
+            <h3>By tag <span class="cap">by {{tagsBy}} listened</span></h3>
+            <SegmentedControl v-model="tagsBy" :options="METRIC_OPTS" />
+          </div>
+          <TagBreakdown :data="tags" :metric="tagsBy" />
         </div>
       </section>
     </template>
@@ -173,6 +205,19 @@ const hasRatings = computed(() => overview.value && overview.value.rated_count >
   font-size: 15px;
   font-weight: 500;
   color: var(--text-h);
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.card-head h3 {
+  margin: 0;
 }
 
 .cap {
