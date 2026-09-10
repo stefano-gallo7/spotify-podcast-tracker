@@ -1,15 +1,37 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 ShowStatus = Literal["active", "finished", "dropped", "paused"]
 
 
+def normalize_tag(raw: str) -> str:
+    """Trim, collapse internal whitespace, lower-case."""
+    return " ".join(raw.strip().lower().split())
+
+
 class TagOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     name: str
+
+
+class TagWithCount(BaseModel):
+    name: str
+    show_count: int
+
+
+class AddTagRequest(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        v = normalize_tag(v)
+        if not v:
+            raise ValueError("tag name cannot be empty")
+        return v
 
 
 class ShowSummary(BaseModel):

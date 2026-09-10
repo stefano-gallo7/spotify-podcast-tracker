@@ -7,7 +7,16 @@ from sqlalchemy.orm import Session
 
 from app.db import SessionLocal, get_session
 from app.db_models import Show, Tag
-from app.schemas import AddShowRequest, PaginatedShows, ShowDetail, ShowStatus, ShowSummary, ShowUpdate
+from app.schemas import (
+    AddShowRequest,
+    AddTagRequest,
+    PaginatedShows,
+    ShowDetail,
+    ShowStatus,
+    ShowSummary,
+    ShowUpdate,
+    normalize_tag,
+)
 from app.spotify import call_with_retry, make_client, populate_show, sync_show_episodes
 
 router = APIRouter(prefix="/api/shows", tags=["shows"])
@@ -18,6 +27,13 @@ SortOrder = Literal["asc", "desc"]
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _sort_episodes(show: Show) -> None:
+    show.episodes.sort(
+        key=lambda e: (e.release_date is None, e.release_date),
+        reverse=True,
+    )
 
 
 def _scan_episodes(show_id: int) -> None:
@@ -122,10 +138,7 @@ def get_show(show_id: int, session: Session = Depends(get_session)):
     if show is None:
         raise HTTPException(status_code=404, detail="Show not found")
 
-    show.episodes.sort(
-        key=lambda e: (e.release_date is None, e.release_date),
-        reverse=True,
-    )
+    _sort_episodes(show)
     return show
 
 
@@ -148,8 +161,53 @@ def update_show(
     session.commit()
     session.refresh(show)
 
-    show.episodes.sort(
-        key=lambda e: (e.release_date is None, e.release_date),
-        reverse=True,
-    )
+    _sort_episodes(show)
+    return show
+
+
+@router.post("/{show_id}/tags", response_model=ShowDetail, status_code=201)
+def add_tag(
+    show_id: int,
+    body: AddTagRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+):
+    show = session.query(Show).filter(Show.id == show_id).first()
+    if show is None:
+        raise HTTPException(status_code=404, detail="Show not found")
+
+    tag = session.query(Tag).filter(Tag.name == body.name).first()
+    if tag is None:
+        tag = Tag(name=body.name)
+        session.add(tag)
+        session.flush()
+
+    if tag in show.tags:
+        response.status_code = 200  # idempotent: already tagged
+    else:
+        show.tags.append(tag)
+
+    session.commit()
+    session.refresh(show)
+
+    _sort_episodes(show)
+    return show
+
+
+@router.delete("/{show_id}/tags/{tag_name}", response_model=ShowDetail)
+def remove_tag(show_id: int, tag_name: str, session: Session = Depends(get_session)):
+    show = session.query(Show).filter(Show.id == show_id).first()
+    if show is None:
+        raise HTTPException(status_code=404, detail="Show not found")
+
+    norm = normalize_tag(tag_name)
+    tag = next((t for t in show.tags if t.name == norm), None)
+    if tag is not None:
+        show.tags.remove(tag)
+        if not tag.shows:  # orphan cleanup
+            session.delete(tag)
+        session.commit()
+        session.refresh(show)
+
+    _sort_episodes(show)
     return show

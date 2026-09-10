@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { createPatchHelper } from '../utils/applyPatch'
 import { getShow, updateShow } from '../api'
 import EpisodeRow from '../components/EpisodeRow.vue'
+import TagChips from '../components/TagChips.vue'
 
 const route = useRoute()
 
@@ -120,6 +121,7 @@ onMounted(loadShow)
             rel="noopener"
             class="spotify-link"
           >Open in Spotify ↗</a>
+          <TagChips :show="show" @update="show = $event" />
         </div>
       </header>
 

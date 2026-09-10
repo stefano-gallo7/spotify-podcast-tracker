@@ -49,6 +49,24 @@ export function addShowByUri(uri) {
   })
 }
 
+export function listTags() {
+  return request('/api/tags')
+}
+
+export function addShowTag(showId, name) {
+  return request(`/api/shows/${showId}/tags`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+}
+
+export function removeShowTag(showId, name) {
+  return request(`/api/shows/${showId}/tags/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
+}
+
 // --- Stats / dashboard ------------------------------------------------------
 
 export function getStatsOverview() {
