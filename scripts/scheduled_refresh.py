@@ -24,6 +24,7 @@ from logging.handlers import RotatingFileHandler
 from app.db import SessionLocal
 from app.db_models import AppState, Show
 from app.spotify import (
+    NetworkUnavailable,
     auto_finish_shows,
     auto_pause_stale_shows,
     auto_reactivate_shows,
@@ -148,17 +149,35 @@ def _run(session, sp, config: AppState, *, dry_run: bool, force: bool, logger) -
         _log_transition_preview(session, config, logger)
         return stats
 
+    offline = False
     for show, full, escalate in due:
         try:
             logger.info("Refreshing '%s' (%s)...", show.name, "full" if full else "light")
             refresh_show(sp, session, show, stats, full=full, escalate_on_new=escalate)
             session.commit()
+        except NetworkUnavailable as e:
+            # Not this show's fault — Spotify is unreachable, so every remaining
+            # show would fail identically after paying the same retry budget.
+            # Nothing got marked synced, so these stay due and the next poll
+            # resumes the run.
+            logger.warning("  ! Spotify unreachable, aborting run: %s", e)
+            session.rollback()
+            offline = True
+            break
         except Exception as e:  # one bad show shouldn't abort the whole run
             logger.warning("  ! failed on '%s': %s", show.name, e)
             session.rollback()
 
     # Automatic status transitions, in order: a caught-up show finishes; a long-idle
     # show pauses; a paused show played since pausing reactivates.
+    #
+    # Skipped when the run went offline: every transition reads listening state
+    # that this run failed to refresh, so auto-pause would read "no plays since
+    # the cutoff" off a stale snapshot and pause a show the user is listening to.
+    if offline:
+        logger.info("Skipping status transitions (refresh data is stale).")
+        return stats
+
     if config.auto_finish_enabled:
         stats["shows_finished"] = auto_finish_shows(session)
     if config.auto_pause_enabled:
@@ -189,17 +208,53 @@ def run_once(*, dry_run: bool = False, force: bool = False, logger=None) -> dict
             session.close()
 
 
+def _lock_owner_alive(path: str) -> bool:
+    """Is the process recorded in the lock file still running?
+
+    PID reuse could in principle make a dead owner look alive; on a single-user
+    local app that's a far better failure than the reverse (wrongly clearing a
+    live lock and running two refreshes at once).
+    """
+    try:
+        with open(path) as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return False  # unreadable, or empty because the owner died mid-write
+    if pid == os.getpid():
+        return True
+    try:
+        os.kill(pid, 0)  # signal 0: existence check, delivers nothing
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # alive, just owned by another user
+    return True
+
+
 @contextmanager
 def _file_lock(path: str):
     """Refuse to start if a run is already in progress (rate-limited runs can be
-    long; overlapping runs would double the API load and race on commits)."""
-    try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError:
-        raise RuntimeError(
-            f"A refresh appears to be running (lock file '{path}' exists). "
-            "Delete it if you're sure no run is active."
-        )
+    long; overlapping runs would double the API load and race on commits).
+
+    A lock whose owner is gone is *stale*, not held: a run killed mid-flight —
+    app restart, `--reload`, a crash — never reaches the `finally` below. So the
+    owner's PID goes into the file and gets re-checked here, rather than one
+    interrupted run wedging every future one until someone deletes it by hand.
+    """
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            if _lock_owner_alive(path):
+                raise RuntimeError(
+                    f"A refresh appears to be running (lock file '{path}' is held "
+                    "by a live process). Delete it if you're sure no run is active."
+                )
+            try:
+                os.unlink(path)  # stale; retry the create (loses a race harmlessly)
+            except FileNotFoundError:
+                pass
     try:
         os.write(fd, str(os.getpid()).encode())
         os.close(fd)

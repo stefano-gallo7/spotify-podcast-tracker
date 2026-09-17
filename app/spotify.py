@@ -9,6 +9,7 @@ import re
 import time
 from datetime import date, datetime, timedelta, timezone
 
+import requests
 import spotipy
 from dotenv import load_dotenv
 from spotipy.exceptions import SpotifyException
@@ -20,6 +21,23 @@ from app.db_models import AppState, Episode, Show
 SCOPE = "user-library-read user-read-playback-position"
 MAX_RETRIES = 5
 
+# Spotipy gives the *API* session a 5s default timeout but leaves the *token*
+# session (`SpotifyOAuth`) at `requests_timeout=None` — no timeout at all. They
+# are two separate `requests` sessions, so a stalled socket on the token refresh
+# blocks forever: a scheduled run once hung mid-`/api/token` on a laptop wake and
+# sat there for 17h, holding the refresh lock and the scheduler's only job slot.
+# Pass a timeout to both, explicitly.
+REQUESTS_TIMEOUT = 15
+
+
+class NetworkUnavailable(RuntimeError):
+    """Spotify was unreachable at the transport level (DNS, connect, timeout).
+
+    Distinct from a Spotify-side error: it's about *our* connectivity, so it hits
+    every request equally — a caller looping over many shows should abandon the
+    whole batch rather than pay the retry budget again for each one.
+    """
+
 
 def now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -27,7 +45,10 @@ def now() -> datetime:
 
 def make_client() -> spotipy.Spotify:
     load_dotenv()
-    return spotipy.Spotify(auth_manager=SpotifyOAuth(scope=SCOPE))
+    return spotipy.Spotify(
+        auth_manager=SpotifyOAuth(scope=SCOPE, requests_timeout=REQUESTS_TIMEOUT),
+        requests_timeout=REQUESTS_TIMEOUT,
+    )
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -53,15 +74,45 @@ def description_excerpt(data: dict, max_len: int = 80) -> str | None:
     return f"{clipped}…"
 
 
+def _is_connection_error(e: Exception) -> bool:
+    """True for transport-level failures, however they reach us.
+
+    They arrive by two different routes: raw from the OAuth session (spotipy's
+    `refresh_access_token` only catches `HTTPError`, so a DNS/connect failure
+    propagates as a bare `requests` exception), or wrapped by the API session's
+    `_internal_call`, which turns urllib3's `RetryError` into a
+    `SpotifyException` carrying a sentinel negative `http_status`.
+    """
+    if isinstance(e, requests.exceptions.RequestException):
+        return True
+    return isinstance(e, SpotifyException) and (e.http_status or -1) < 0
+
+
 def call_with_retry(fn, *args, **kwargs):
     """
-    Call a Spotify API function, retrying on 429 (honoring Retry-After) and 5xx
-    (exponential backoff). Re-raises 4xx errors other than 429 immediately.
+    Call a Spotify API function, retrying on 429 (honoring Retry-After), 5xx
+    (exponential backoff), and transport failures (DNS / connect / timeout).
+    Re-raises 4xx errors other than 429 immediately; raises `NetworkUnavailable`
+    once a connection failure has survived every attempt.
     """
     for attempt in range(MAX_RETRIES):
+        last_attempt = attempt == MAX_RETRIES - 1
         try:
             return fn(*args, **kwargs)
-        except SpotifyException as e:
+        except (SpotifyException, requests.exceptions.RequestException) as e:
+            # Transport first: a wrapped connection error is still a
+            # SpotifyException, but its http_status is a sentinel, not a status.
+            if _is_connection_error(e):
+                if last_attempt:
+                    raise NetworkUnavailable(str(e)) from e
+                wait = 2 ** attempt
+                print(f"  connection error; retrying in {wait}s")
+                time.sleep(wait)
+                continue
+
+            if not isinstance(e, SpotifyException):
+                raise  # a non-connection `requests` error we don't handle
+
             if e.http_status == 429:
                 retry_after = 1
                 if e.headers:
@@ -72,7 +123,7 @@ def call_with_retry(fn, *args, **kwargs):
                 print(f"  rate limited; sleeping {retry_after + 1}s")
                 time.sleep(retry_after + 1)
                 continue
-            if 500 <= e.http_status < 600 and attempt < MAX_RETRIES - 1:
+            if 500 <= e.http_status < 600 and not last_attempt:
                 wait = 2 ** attempt
                 print(f"  server error {e.http_status}; retrying in {wait}s")
                 time.sleep(wait)
