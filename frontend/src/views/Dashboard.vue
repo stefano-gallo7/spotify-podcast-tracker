@@ -12,7 +12,14 @@ import SegmentedControl from '../components/SegmentedControl.vue'
 
 const overview = ref(null)
 const topShows = ref([])
-const activity = ref({ points: [], has_older: false, has_newer: false, start: null, end: null })
+const activity = ref({
+  points: [],
+  has_older: false,
+  has_newer: false,
+  start: null,
+  end: null,
+  latest_history_timestamp: null,
+})
 const tags = ref([])
 const loading = ref(true)
 const error = ref(null)
@@ -51,6 +58,28 @@ const WINDOW_OPTS = [
   { label: '12m', value: 12 },
   { label: 'All', value: 0 },
 ]
+
+// Optional "export ends" reference line on Activity. The preference is a
+// per-browser convenience; storage can be unavailable, so default to on.
+const HISTORY_LINE_KEY = 'dashboard.activity.historyLine'
+function readHistoryLinePref() {
+  try {
+    return localStorage.getItem(HISTORY_LINE_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+const showHistoryLine = ref(readHistoryLinePref())
+watch(showHistoryLine, (on) => {
+  try {
+    localStorage.setItem(HISTORY_LINE_KEY, on ? '1' : '0')
+  } catch {
+    /* not persisted — fine */
+  }
+})
+const historyMarker = computed(() =>
+  showHistoryLine.value ? activity.value.latest_history_timestamp : null,
+)
 
 const H = 3600000
 
@@ -209,9 +238,17 @@ const activityRange = computed(() => {
               <SegmentedControl v-model="activityMetric" :options="METRIC_OPTS" />
               <SegmentedControl v-model="resolutionModel" :options="resOptions" />
               <SegmentedControl v-model="activityMonths" :options="WINDOW_OPTS" />
+              <label
+                v-if="activity.latest_history_timestamp"
+                class="line-toggle"
+                title="Mark where the imported Spotify export ends: measured data before, API-estimated after"
+              >
+                <input v-model="showHistoryLine" type="checkbox" />
+                Export line
+              </label>
             </div>
           </div>
-          <ActivityLine :data="activity.points" :metric="activityMetric" />
+          <ActivityLine :data="activity.points" :metric="activityMetric" :marker="historyMarker" />
         </div>
         
         <div v-if="hasRatings" class="chart-card">
@@ -343,6 +380,21 @@ const activityRange = computed(() => {
   color: var(--text);
   min-width: 96px;
   text-align: center;
+}
+
+.line-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.line-toggle input {
+  margin: 0;
+  cursor: pointer;
 }
 
 .cap {

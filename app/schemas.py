@@ -244,6 +244,9 @@ class ActivitySeries(BaseModel):
     has_newer: bool      # is this window paged back from the present (enable ▶)
     start: str | None = None   # window start month "YYYY-MM" (for the period label)
     end: str | None = None     # window end month "YYYY-MM"
+    # Date "YYYY-MM-DD" of the latest play in any imported export (where
+    # measured data ends). Always sent; the client decides if it's in-window.
+    latest_history_timestamp: str | None = None
 
 
 class TagStat(BaseModel):

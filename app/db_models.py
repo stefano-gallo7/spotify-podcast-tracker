@@ -162,6 +162,10 @@ class AppState(Base):
 
     id = Column(Integer, primary_key=True)
     initial_sync_completed_at = Column(DateTime, nullable=True)
+    # Latest play timestamp in any imported streaming-history export. Stamped
+    # by `import_history` (max-wins); marks where measured export data ends.
+    # Distinct from point zero — see CLAUDE.md "Data semantics".
+    latest_history_timestamp = Column(DateTime, nullable=True)
 
     # Per-status refresh cadence (days between syncs). active/paused get a full
     # refresh, finished gets a light (metadata-only) refresh; dropped is skipped.

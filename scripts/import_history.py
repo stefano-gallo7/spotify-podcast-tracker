@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 
 from app.db import SessionLocal
-from app.db_models import Episode, Show
+from app.db_models import AppState, Episode, Show
 
 
 def _normalize(name: str) -> str:
@@ -38,8 +38,13 @@ def import_history(history_path: str, session) -> dict[str, int]:
         "episodes_updated": 0,
         "episodes_unchanged": 0,
     }
+    latest: datetime | None = None
 
     for entry in entries:
+        listened_at = _parse_ts(entry["last_listened_at"])
+        if latest is None or listened_at > latest:
+            latest = listened_at
+
         uri = entry["spotify_episode_uri"]
         episode = episode_cache.get(uri)
         
@@ -55,8 +60,26 @@ def import_history(history_path: str, session) -> dict[str, int]:
             else:
                 stats["episodes_unchanged"] += 1
 
+    stats["latest_history_timestamp"] = _stamp_latest(session, latest)
     session.commit()
     return stats
+
+
+def _stamp_latest(session, latest: datetime | None) -> datetime | None:
+    """Advance AppState.latest_history_timestamp (max-wins) and return its value.
+
+    Max-wins so importing an older export never moves the marker backwards.
+    """
+    state = session.query(AppState).first()
+    if state is None:
+        print("Warning: AppState row missing (run `python -m scripts.init_db`); "
+              "latest_history_timestamp not recorded.")
+        return None
+    if latest is not None and (
+        state.latest_history_timestamp is None or latest > state.latest_history_timestamp
+    ):
+        state.latest_history_timestamp = latest
+    return state.latest_history_timestamp
 
 
 def _get_or_create_show(
@@ -150,5 +173,6 @@ if __name__ == "__main__":
         f"Shows created: {stats['shows_created']}\n"
         f"Episodes created: {stats['episodes_created']}\n"
         f"Episodes updated: {stats['episodes_updated']}\n"
-        f"Episodes unchanged: {stats['episodes_unchanged']}"
+        f"Episodes unchanged: {stats['episodes_unchanged']}\n"
+        f"Latest history timestamp: {stats['latest_history_timestamp']}"
     )

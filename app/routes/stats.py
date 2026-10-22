@@ -6,7 +6,7 @@ from sqlalchemy import and_, case, func
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.db_models import Episode, Show, Tag, show_tags
+from app.db_models import AppState, Episode, Show, Tag, show_tags
 from app.schemas import (
     ActivityPoint,
     ActivitySeries,
@@ -164,11 +164,16 @@ def activity(
     now = _now()
     now_index = now.year * 12 + (now.month - 1)
     earliest = session.query(func.min(Episode.last_played_at)).scalar()
+    history_ts = session.query(AppState.latest_history_timestamp).scalar()
+    history_date = history_ts.date().isoformat() if history_ts else None
 
     if months == 0:
         # All time: one window from the earliest play to now; no paging.
         if earliest is None:
-            return ActivitySeries(points=[], has_older=False, has_newer=False)
+            return ActivitySeries(
+                points=[], has_older=False, has_newer=False,
+                latest_history_timestamp=history_date,
+            )
         start_index = earliest.year * 12 + (earliest.month - 1)
         end_index = now_index
         has_older = False
@@ -235,6 +240,7 @@ def activity(
         has_newer=has_newer,
         start=_month_start(start_index).strftime("%Y-%m"),
         end=_month_start(end_index).strftime("%Y-%m"),
+        latest_history_timestamp=history_date,
     )
 
 
