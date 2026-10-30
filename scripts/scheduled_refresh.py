@@ -25,11 +25,13 @@ from app.db import SessionLocal
 from app.db_models import AppState, Show
 from app.spotify import (
     NetworkUnavailable,
+    SpotifyAuthRevoked,
     auto_finish_shows,
     auto_pause_stale_shows,
     auto_reactivate_shows,
     make_client,
     now,
+    record_auth_failure,
     refresh_show,
 )
 
@@ -164,6 +166,14 @@ def _run(session, sp, config: AppState, *, dry_run: bool, force: bool, logger) -
             session.rollback()
             offline = True
             break
+        except SpotifyAuthRevoked as e:
+            # Same shape as offline — every remaining show would fail too — but
+            # it won't heal by itself, so flag it for the frontend banner.
+            logger.error("  ! Spotify login rejected, aborting run: %s", e)
+            session.rollback()
+            record_auth_failure(str(e))
+            offline = True
+            break
         except Exception as e:  # one bad show shouldn't abort the whole run
             logger.warning("  ! failed on '%s': %s", show.name, e)
             session.rollback()
@@ -171,9 +181,10 @@ def _run(session, sp, config: AppState, *, dry_run: bool, force: bool, logger) -
     # Automatic status transitions, in order: a caught-up show finishes; a long-idle
     # show pauses; a paused show played since pausing reactivates.
     #
-    # Skipped when the run went offline: every transition reads listening state
-    # that this run failed to refresh, so auto-pause would read "no plays since
-    # the cutoff" off a stale snapshot and pause a show the user is listening to.
+    # Skipped when the run went offline or lost its Spotify login: every
+    # transition reads listening state that this run failed to refresh, so
+    # auto-pause would read "no plays since the cutoff" off a stale snapshot and
+    # pause a show the user is listening to.
     if offline:
         logger.info("Skipping status transitions (refresh data is stale).")
         return stats

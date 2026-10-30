@@ -191,6 +191,15 @@ class AppState(Base):
     # Distinct from point zero — see CLAUDE.md "Data semantics".
     latest_history_timestamp = Column(DateTime, nullable=True)
 
+    # Set when Spotify rejects our stored login (e.g. refresh token revoked);
+    # cleared once a login works again. `_at` keeps the *first* failure time.
+    # Surfaced by `GET /api/spotify/status` as the frontend's reconnect banner.
+    spotify_auth_error_at = Column(DateTime, nullable=True)
+    # Spotify account the library belongs to. The in-app reconnect only accepts
+    # this account; the terminal login (`scripts/spotify_login.py`) overwrites it.
+    spotify_user_id = Column(String, nullable=True)
+    spotify_auth_error = Column(String, nullable=True)
+
     # Per-status refresh cadence (days between syncs). active/paused get a full
     # refresh, finished gets a light (metadata-only) refresh; dropped is skipped.
     refresh_active_interval_days = Column(Integer, default=1, nullable=False)

@@ -129,7 +129,7 @@ if __name__ == "__main__":
     )
     parser.parse_args()
 
-    sp = make_client()
+    sp = make_client(interactive=True)
     session = SessionLocal()
     try:
         stats = enrich(session, sp)

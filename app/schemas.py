@@ -188,6 +188,14 @@ class SettingsUpdate(BaseModel):
     scheduler_run_hour: int | None = Field(None, ge=0, le=23)
 
 
+class SpotifyAuthStatus(BaseModel):
+    """Whether the stored Spotify login still works (drives the reconnect banner)."""
+
+    auth_ok: bool
+    error_at: datetime | None = None  # first failure, UTC (sent with offset)
+    message: str | None = None
+
+
 # --- Stats / dashboard (read-only aggregates) -------------------------------
 # Listening time is an *estimate*: SUM(COALESCE(ms_played, duration_ms if the
 # episode is fully played, resume_position_ms, 0)). See DASHBOARD_PLAN.md.

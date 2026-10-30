@@ -17,7 +17,14 @@ from app.schemas import (
     ShowUpdate,
     normalize_tag,
 )
-from app.spotify import call_with_retry, make_client, populate_show, sync_show_episodes
+from app.spotify import (
+    SpotifyAuthRevoked,
+    call_with_retry,
+    make_client,
+    populate_show,
+    record_auth_failure,
+    sync_show_episodes,
+)
 
 router = APIRouter(prefix="/api/shows", tags=["shows"])
 
@@ -51,6 +58,11 @@ def _scan_episodes(show_id: int) -> None:
         stats = {"episodes_inserted": 0, "episodes_updated": 0}
         sync_show_episodes(sp, session, show, stats)
         session.commit()
+    except SpotifyAuthRevoked as e:
+        # No request left to fail (the response is sent), so the app-level
+        # handler never sees this — flag it directly for the banner.
+        session.rollback()
+        record_auth_failure(str(e))
     finally:
         session.close()
 

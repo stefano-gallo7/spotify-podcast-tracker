@@ -1,5 +1,25 @@
 <script setup>
+import { onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { lastLibraryQuery } from './router'
+import SpotifyAuthBanner from './components/SpotifyAuthBanner.vue'
+import { useSpotifyStatus } from './composables/useSpotifyStatus'
+
+const route = useRoute()
+const router = useRouter()
+const { startWatching, handleReturn } = useSpotifyStatus()
+
+onMounted(async () => {
+  startWatching()
+  // The backend's OAuth callback sends us back with ?spotify=reconnected|error.
+  // Read it once, then drop it so a reload doesn't replay the notice.
+  await router.isReady()
+  const { spotify, reason, ...rest } = route.query
+  if (spotify) {
+    handleReturn(spotify, reason)
+    router.replace({ query: rest })
+  }
+})
 </script>
 
 <template>
@@ -16,6 +36,7 @@ import { lastLibraryQuery } from './router'
     </nav>
   </header>
   <main class="app-main">
+    <SpotifyAuthBanner />
     <router-view />
   </main>
 </template>

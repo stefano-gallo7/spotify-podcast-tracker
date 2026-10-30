@@ -1,5 +1,6 @@
 data/
 .cache
+.cache.bak
 
 # Environment variables
 .env

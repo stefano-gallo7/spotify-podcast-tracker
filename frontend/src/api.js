@@ -1,8 +1,19 @@
+import { markSpotifyAuthRevoked } from './composables/useSpotifyStatus'
+
 const BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
+
+// The backend's Spotify login is dead (revoked / missing); only reconnecting fixes it.
+export class SpotifyAuthError extends Error {}
 
 async function request(path, options = {}) {
   const response = await fetch(`${BASE}${path}`, options)
   if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    if (body?.code === 'spotify_auth_revoked') {
+      // Raise the banner now, without waiting for the next status check.
+      markSpotifyAuthRevoked(body.detail)
+      throw new SpotifyAuthError(body.detail)
+    }
     throw new Error(`API returned ${response.status}`)
   }
   return response.json()
@@ -46,6 +57,15 @@ export function updateEpisode(id, patch) {
 
 export function searchSpotifyShows(q) {
   return request(`/api/spotify/search?q=${encodeURIComponent(q)}`)
+}
+
+export function getSpotifyStatus() {
+  return request('/api/spotify/status')
+}
+
+// A page the browser navigates to (it redirects on to Spotify), not a fetch.
+export function spotifyLoginUrl() {
+  return `${BASE}/api/spotify/login`
 }
 
 export function addShowByUri(uri) {

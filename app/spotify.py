@@ -8,13 +8,16 @@ refresh script (periodic re-sync of metadata + listening progress).
 import re
 import time
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import requests
 import spotipy
 from dotenv import load_dotenv
+from spotipy.cache_handler import CacheHandler
 from spotipy.exceptions import SpotifyException
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyOAuth, SpotifyOauthError
 
+from app.db import SessionLocal
 from app.db_models import AppState, Episode, Show
 
 
@@ -29,6 +32,18 @@ MAX_RETRIES = 5
 # Pass a timeout to both, explicitly.
 REQUESTS_TIMEOUT = 15
 
+# spotipy's default cache is `.cache` in the *current directory*, so uvicorn, the
+# scheduler and the CLI scripts would each use a different token file depending
+# on where they were launched. Anchor it to the project root.
+CACHE_PATH = str(Path(__file__).resolve().parent.parent / ".cache")
+
+# OAuth error codes meaning "Spotify rejected our credentials" — only a new
+# login fixes these. Anything else from the token endpoint (e.g. a 5xx, whose
+# `error` is just the response text) is a transient failure, not an auth one.
+_AUTH_ERROR_CODES = {"invalid_grant", "invalid_client", "unauthorized_client"}
+
+LOGIN_HINT = "Reconnect to Spotify from the app, or run `python -m scripts.spotify_login`."
+
 
 class NetworkUnavailable(RuntimeError):
     """Spotify was unreachable at the transport level (DNS, connect, timeout).
@@ -39,16 +54,102 @@ class NetworkUnavailable(RuntimeError):
     """
 
 
+class SpotifyAuthRevoked(RuntimeError):
+    """Spotify no longer accepts our stored credentials (e.g. refresh token revoked).
+
+    Like `NetworkUnavailable` it hits every request equally, so batch callers
+    should abort; unlike it, waiting won't help — the user has to log in again.
+    """
+
+
+class _NonInteractiveOAuth(SpotifyOAuth):
+    """`SpotifyOAuth` that never falls back to an interactive login.
+
+    With no usable cached token, stock spotipy calls `get_auth_response`, which
+    opens a browser and blocks on `input()` for the redirect URL — in the server
+    or the scheduler thread that would hang forever with nobody to answer.
+    """
+
+    def get_auth_response(self, open_browser=None):
+        raise SpotifyAuthRevoked(f"No valid Spotify login is cached. {LOGIN_HINT}")
+
+
 def now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def make_client() -> spotipy.Spotify:
+def make_auth_manager(
+    *,
+    interactive: bool = False,
+    redirect_uri: str | None = None,
+    cache_handler: CacheHandler | None = None,
+) -> SpotifyOAuth:
+    """`cache_handler` overrides the shared token file — e.g. an in-memory one,
+    to hold a fresh login until it has been checked before saving it."""
     load_dotenv()
+    cls = SpotifyOAuth if interactive else _NonInteractiveOAuth
+    # spotipy warns if both are given, so pass exactly one.
+    cache = {"cache_handler": cache_handler} if cache_handler else {"cache_path": CACHE_PATH}
+    return cls(
+        scope=SCOPE,
+        redirect_uri=redirect_uri,  # None → SPOTIPY_REDIRECT_URI from .env
+        open_browser=interactive,
+        requests_timeout=REQUESTS_TIMEOUT,
+        **cache,
+    )
+
+
+def make_client(*, interactive: bool = False) -> spotipy.Spotify:
+    """Spotify client backed by the cached login.
+
+    Non-interactive by default (server, scheduler): a missing or revoked login
+    raises `SpotifyAuthRevoked` instead of prompting. CLI scripts that may run
+    before any login exists pass `interactive=True`.
+    """
     return spotipy.Spotify(
-        auth_manager=SpotifyOAuth(scope=SCOPE, requests_timeout=REQUESTS_TIMEOUT),
+        auth_manager=make_auth_manager(interactive=interactive),
         requests_timeout=REQUESTS_TIMEOUT,
     )
+
+
+def record_auth_failure(message: str) -> None:
+    """Persist "Spotify login is broken" so the frontend can warn about it.
+
+    Uses its own session: callers are usually mid-rollback, and the flag must
+    survive that. Keeps the first failure time — the banner shows *since when*.
+    """
+    with SessionLocal() as session:
+        state = session.query(AppState).first()
+        if state is None:
+            return
+        if state.spotify_auth_error_at is None:
+            state.spotify_auth_error_at = now()
+        state.spotify_auth_error = message
+        session.commit()
+
+
+def clear_auth_failure() -> None:
+    with SessionLocal() as session:
+        state = session.query(AppState).first()
+        if state is None or state.spotify_auth_error_at is None:
+            return
+        state.spotify_auth_error_at = None
+        state.spotify_auth_error = None
+        session.commit()
+
+
+def remember_spotify_account(user_id: str) -> None:
+    """Record which Spotify account this library belongs to.
+
+    The in-app reconnect refuses any other account (see the OAuth callback); the
+    terminal login calls this unconditionally — the deliberate way to switch.
+    """
+    with SessionLocal() as session:
+        state = session.query(AppState).first()
+        if state is None:
+            return
+        state.spotify_user_id = user_id
+        session.commit()
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -93,12 +194,18 @@ def call_with_retry(fn, *args, **kwargs):
     Call a Spotify API function, retrying on 429 (honoring Retry-After), 5xx
     (exponential backoff), and transport failures (DNS / connect / timeout).
     Re-raises 4xx errors other than 429 immediately; raises `NetworkUnavailable`
-    once a connection failure has survived every attempt.
+    once a connection failure has survived every attempt, and `SpotifyAuthRevoked`
+    at once when the token endpoint rejects our credentials (no retry can fix it).
     """
     for attempt in range(MAX_RETRIES):
         last_attempt = attempt == MAX_RETRIES - 1
         try:
             return fn(*args, **kwargs)
+        except SpotifyOauthError as e:
+            # Raised from the token refresh that precedes the API call.
+            if e.error in _AUTH_ERROR_CODES:
+                raise SpotifyAuthRevoked(f"{e.error_description or e.error}. {LOGIN_HINT}") from e
+            raise
         except (SpotifyException, requests.exceptions.RequestException) as e:
             # Transport first: a wrapped connection error is still a
             # SpotifyException, but its http_status is a sentinel, not a status.
