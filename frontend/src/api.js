@@ -17,6 +17,13 @@ export function getShow(id) {
   return request(`/api/shows/${id}`)
 }
 
+export function listEpisodes({ inProgress, showStatus, limit = 20 } = {}) {
+  const query = new URLSearchParams({ limit })
+  if (inProgress !== undefined) query.set('in_progress', inProgress)
+  if (showStatus) query.set('show_status', showStatus)
+  return request(`/api/episodes?${query}`)
+}
+
 export function getEpisode(id) {
   return request(`/api/episodes/${id}`)
 }

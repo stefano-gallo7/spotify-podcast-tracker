@@ -1,12 +1,22 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { createPatchHelper } from '../utils/applyPatch'
 import { getShow, updateShow } from '../api'
 import EpisodeRow from '../components/EpisodeRow.vue'
 import TagChips from '../components/TagChips.vue'
 
 const route = useRoute()
+const router = useRouter()
+
+// Return to wherever we came from — Home, or the Library with its filters
+// (they live in the URL). Vue Router records the previous path in
+// history.state.back; it's null on a direct load, so fall back to the Library.
+const BACK_LABELS = { home: 'home', library: 'library', dashboard: 'dashboard' }
+const backPath = window.history.state?.back ?? null
+const backName = backPath ? router.resolve(backPath).name : null
+const backTo = BACK_LABELS[backName] ? backPath : { name: 'library' }
+const backLabel = `← Back to ${BACK_LABELS[backName] ?? 'library'}`
 
 const show = ref(null)
 const loading = ref(true)
@@ -77,7 +87,7 @@ onMounted(loadShow)
 
 <template>
   <div class="page">
-    <router-link to="/" class="back-link">← Back to library</router-link>
+    <router-link :to="backTo" class="back-link">{{ backLabel }}</router-link>
 
     <p v-if="loading" class="status-line">Loading…</p>
     <p v-else-if="error" class="status-line error">Failed to load: {{ error }}</p>
@@ -168,7 +178,7 @@ onMounted(loadShow)
 
 <style scoped>
 .page {
-  padding: 12px 10px;
+  padding: 12px 0;
   max-width: 900px;
   margin: 0 auto;
 }

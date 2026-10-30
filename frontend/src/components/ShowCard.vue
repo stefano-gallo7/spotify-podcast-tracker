@@ -88,8 +88,6 @@ function onStatusChange(event) {
   display: block;
   text-decoration: none;
   color: inherit;
-  margin-left: 10px;
-  margin-right: 10px;
 }
 
 .show-card {

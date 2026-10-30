@@ -272,7 +272,7 @@ const activityRange = computed(() => {
 .dashboard {
   max-width: 1100px;
   margin: 0 auto;
-  padding: 0 20px 40px;
+  padding-bottom: 40px;
 }
 
 .tiles {

@@ -64,7 +64,7 @@ def overview(session: Session = Depends(get_session)):
         ), 0).label("estimated_from_duration_count"),
         func.coalesce(func.sum(_PLAYED_1), 0).label("episodes_played"),
         func.coalesce(func.sum(
-            case((and_(Episode.resume_position_ms.isnot(None), Episode.is_fully_played.is_(False)), 1), else_=0)
+            case((Episode.is_in_progress, 1), else_=0)
         ), 0).label("episodes_in_progress"),
         func.coalesce(func.sum(case((Episode.is_favorite.is_(True), 1), else_=0)), 0).label("favorite_episodes"),
         func.avg(Episode.rating).label("average_rating"),
@@ -74,6 +74,17 @@ def overview(session: Session = Depends(get_session)):
     total_shows = session.query(func.count(Show.id)).scalar() or 0
     favorite_shows = (
         session.query(func.count(Show.id)).filter(Show.is_favorite.is_(True)).scalar() or 0
+    )
+
+    # Dated by the show's last play, not status_changed_at: the initial setup
+    # stamped every show's status on setup day, and shows finished before the
+    # app existed only have their real finish date in the imported plays.
+    year_start = datetime(_now().year, 1, 1)
+    shows_finished_this_year = (
+        session.query(func.count(Show.id))
+        .filter(Show.status == "finished", Show.last_played_at >= year_start)
+        .scalar()
+        or 0
     )
 
     status_rows = dict(
@@ -103,6 +114,7 @@ def overview(session: Session = Depends(get_session)):
         total_shows=int(total_shows),
         favorite_shows=int(favorite_shows),
         favorite_episodes=int(ep.favorite_episodes),
+        shows_finished_this_year=int(shows_finished_this_year),
         average_rating=float(ep.average_rating) if ep.average_rating is not None else None,
         rated_count=int(ep.rated_count),
         unrated_count=int(ep.total_episodes) - int(ep.rated_count),

@@ -215,6 +215,8 @@ class StatsOverview(BaseModel):
     total_shows: int
     favorite_shows: int
     favorite_episodes: int
+    # finished shows whose last play falls in the current calendar year
+    shows_finished_this_year: int
     # ratings
     average_rating: float | None = None
     rated_count: int

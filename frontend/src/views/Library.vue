@@ -1,10 +1,18 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import ShowCard from '../components/ShowCard.vue'
 import AddShowModal from '../components/AddShowModal.vue'
 import { listShows } from '../api'
 
 const PAGE_SIZE = 20
+const STATUSES = ['active', 'finished', 'dropped', 'paused']
+const SORT_KEYS = ['name', 'listened_count', 'total_episodes', 'last_played']
+const DEFAULT_SORT = 'last_played'
+const DEFAULT_ORDER = 'desc'
+
+const route = useRoute()
+const router = useRouter()
 
 const shows = ref([])
 const total = ref(0)
@@ -16,8 +24,35 @@ const q = ref('')
 const status = ref('')
 const hasMore = ref(false)
 const isFavorite = ref(false)
-const sort = ref('last_played')
-const order = ref('desc')
+const sort = ref(DEFAULT_SORT)
+const order = ref(DEFAULT_ORDER)
+
+// Filter state lives in the URL (?q=&status=&has_more=&is_favorite=&sort=&order=)
+// so links like Home's "See all →" land pre-filtered and reloads keep the view.
+// Unknown values fall back to defaults; defaults are left out of the URL.
+function readQuery(query) {
+  q.value = typeof query.q === 'string' ? query.q : ''
+  status.value = STATUSES.includes(query.status) ? query.status : ''
+  hasMore.value = query.has_more === 'true'
+  isFavorite.value = query.is_favorite === 'true'
+  sort.value = SORT_KEYS.includes(query.sort) ? query.sort : DEFAULT_SORT
+  order.value = query.order === 'asc' ? 'asc' : DEFAULT_ORDER
+}
+
+function writeQuery() {
+  const query = {}
+  if (q.value) query.q = q.value
+  if (status.value) query.status = status.value
+  if (hasMore.value) query.has_more = 'true'
+  if (isFavorite.value) query.is_favorite = 'true'
+  if (sort.value !== DEFAULT_SORT) query.sort = sort.value
+  if (order.value !== DEFAULT_ORDER) query.order = order.value
+  // replace, not push: filter tweaks shouldn't pile up Back-button entries.
+  router.replace({ query })
+}
+
+// Before the watchers below exist, so the initial read doesn't trigger them.
+readQuery(route.query)
 
 const isAddOpen = ref(false)
 const addButton = ref(null)
@@ -57,6 +92,18 @@ async function loadShows() {
   }
 }
 
+// Sort isn't a filter, so it survives a clear.
+const hasActiveFilters = computed(
+  () => Boolean(q.value || status.value || hasMore.value || isFavorite.value),
+)
+
+function clearFilters() {
+  q.value = ''
+  status.value = ''
+  hasMore.value = false
+  isFavorite.value = false
+}
+
 function toggleOrder() {
   order.value = order.value === 'asc' ? 'desc' : 'asc'
 }
@@ -88,13 +135,29 @@ onMounted(loadShows)
 watch(q, () => {
   offset.value = 0
   clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(loadShows, 300)
+  debounceTimer = setTimeout(() => {
+    writeQuery()
+    loadShows()
+  }, 300)
 })
 
 watch([status, hasMore, isFavorite, sort, order], () => {
   offset.value = 0
+  writeQuery()
   loadShows()
 })
+
+// The URL can change while Library stays mounted (e.g. clicking "Library" in
+// the nav from /library?status=paused). Re-read it; our own writeQuery()
+// echoes back here too, but sets every ref to its current value — a no-op.
+// Guarded on the route name: when navigating away the query empties before
+// unmount, and resetting the filters then would fire a replace() mid-navigation.
+watch(
+  () => route.query,
+  (query) => {
+    if (route.name === 'library') readQuery(query)
+  },
+)
 </script>
 
 <template>
@@ -141,6 +204,10 @@ watch([status, hasMore, isFavorite, sort, order], () => {
         Favorites only
       </label>
 
+      <button v-if="hasActiveFilters" type="button" class="clear-filters" @click="clearFilters">
+        Clear filters
+      </button>
+
       <div class="sort-controls">
         <span class="sort-label">Sort:</span>
         <select v-model="sort">
@@ -186,7 +253,7 @@ watch([status, hasMore, isFavorite, sort, order], () => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px 10px;
+  padding: 12px 0;
 }
 
 .search-row {
@@ -238,6 +305,20 @@ select {
   cursor: pointer;
 }
 
+.clear-filters {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.clear-filters:hover {
+  text-decoration: underline;
+}
+
 .sort-controls {
   display: flex;
   align-items: center;
@@ -283,7 +364,6 @@ select {
 }
 
 .status-line {
-  padding: 0 10px;
   color: var(--text);
 }
 
@@ -302,7 +382,7 @@ select {
   align-items: center;
   justify-content: center;
   gap: 16px;
-  padding: 20px 10px;
+  padding: 20px 0;
 }
 
 .pagination button {

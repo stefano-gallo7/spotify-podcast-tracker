@@ -2,12 +2,16 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, String, Integer, SmallInteger, Boolean, DateTime, Date,
-    ForeignKey, Text, Table, CheckConstraint, func, select
+    ForeignKey, Text, Table, CheckConstraint, and_, func, select
 )
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 from app.db import Base
 
+
+# Minimum resume position for an unfinished episode to count as "in progress"
+# (see `Episode.is_in_progress`).
+IN_PROGRESS_MIN_MS = 60_000
 
 show_tags = Table(
     "show_tags",
@@ -147,6 +151,26 @@ class Episode(Base):
     @property
     def id(self) -> str:
         return self.uri.rsplit(":", 1)[-1]
+
+    # Started but not finished. The single definition shared by the episode
+    # list (Home's "Continue listening") and the dashboard KPI, so the two
+    # counts always agree. Spotify records a resume point even for a few
+    # seconds of accidental playback, hence the minimum.
+    @hybrid_property
+    def is_in_progress(self) -> bool:
+        return (
+            self.is_fully_played is False
+            and (self.resume_position_ms or 0) >= IN_PROGRESS_MIN_MS
+        )
+
+    @is_in_progress.expression
+    def is_in_progress(cls):
+        # COALESCE keeps the expression strictly true/false (never NULL), so
+        # NOT(is_in_progress) still matches episodes with no resume point.
+        return and_(
+            cls.is_fully_played.is_(False),
+            func.coalesce(cls.resume_position_ms, 0) >= IN_PROGRESS_MIN_MS,
+        )
 
 
 class AppState(Base):
